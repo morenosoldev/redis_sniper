@@ -1,0 +1,31 @@
+[package]
+name = "redis_main_project"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+borsh = "0.9.3"
+redis = { version = "0.25.3", features = ["tokio-comp"] }
+solana-sdk = "1.8"
+bincode = "1.3.3"
+solana-client = "1.18.12"
+spl-token-client = "0.8.0"
+spl-token = "4.0.0"
+solana-account-decoder = "1.10.20"
+bson = { version = "2", features = ["chrono-0_4"] } 
+raydium-contract-instructions = { git = "http://github.com/raydium-io/raydium-contract-instructions.git", rev = "8710befa6d900a15b03a2fadb8a7caa0a91cfbdb" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+once_cell = "1.10.0"
+thiserror = "1.0"
+tokio = { version = "1.5", features = ["full"] }
+regex = "1.10.4"
+reqwest = { version = "0.11", features = ["json"] }
+mongodb = "2.1"
+solana-transaction-status = "1.18.12"
+spl-associated-token-account ="2.3.0"
+futures = "0.3"
+dotenv = "0.15.0"
+mpl-token-metadata = "4.1.2"
+
+
