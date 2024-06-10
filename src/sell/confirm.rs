@@ -36,8 +36,6 @@ pub async fn confirm_sell(sell_transaction: &SellTransaction) -> Result<(), Box<
             Ok(confirmed_transaction) => {
                 let sell_price = sell_transaction.current_token_price_usd;
                 let sol_amount = calculate_sol_amount_received(confirmed_transaction).await?;
-                println!("Received amount in SOL: {}", sol_amount);
-                println!("Sell amount in SOL: {}", sell_transaction.sol_amount);
                 let profit = (sol_amount as f64) - (sell_transaction.sol_amount as f64);
                 let profit_usd = profit * usd_sol_price;
                 // Calculate profit percentage
@@ -45,13 +43,11 @@ pub async fn confirm_sell(sell_transaction: &SellTransaction) -> Result<(), Box<
 
                 // Format and print profit percentage
                 let profit_percentage_str = format!("{:.4}", profit_percentage); // Display 4 decimal places
-                println!("Profit percentage: {}%", profit_percentage_str);
 
                 // If you need to use the profit percentage as a number
                 let profit_percentage_value: f64 = profit_percentage_str
                     .parse()
                     .unwrap_or_default();
-                println!("Profit percentage as number: {}", profit_percentage_value);
 
                 let sell_transaction_mongo = SellTransactionMongo {
                     transaction_signature: signature.to_string(),

@@ -18,7 +18,6 @@ pub async fn get_current_sol_price() -> Result<f64, Box<dyn Error>> {
     if response.status().is_success() {
         // Parse the JSON response to extract the SOL price
         let sol_price_json: serde_json::Value = response.json().await?;
-        println!("SOL price JSON: {:?}", sol_price_json);
         let sol_price_usd: f64 = sol_price_json["data"]["value"].as_f64().unwrap_or(0.0);
         Ok(sol_price_usd)
     } else {

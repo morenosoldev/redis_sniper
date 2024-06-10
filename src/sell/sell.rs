@@ -167,7 +167,6 @@ pub async fn sell_swap(
     }
 
     let mut swap_amount_in = sell_transaction.amount;
-    println!("Swap amount in: {}", swap_amount_in);
     if let Some(vault_token_account) = fee_vault_token_account {
         let percent = fee_percentage;
         if percent >= 100.0 {

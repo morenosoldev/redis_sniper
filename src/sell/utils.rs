@@ -284,8 +284,6 @@ pub async fn calculate_sol_amount_received(
         .parse::<f64>()
         .map_err(|e| format!("Failed to parse amount string: {}", e))?;
 
-    println!("Amount received: {}", amount_f64);
-
     let sol_amount = amount_f64 / 1_000_000_000.0;
 
     Ok(sol_amount)

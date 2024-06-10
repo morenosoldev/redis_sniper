@@ -39,11 +39,9 @@ async fn receive_trades() {
         let payload: String = message.get_payload().unwrap();
 
         let trade_info: serde_json::Value = serde_json::from_str(&payload).unwrap();
-        println!("Received trade: {}", trade_info);
 
         match trade_info["type_"].as_str() {
             Some("buy") => {
-                println!("Buying token...");
                 let buy_transaction: BuyTransaction = serde_json::from_value(trade_info).unwrap();
                 let _ = buy::buy::buy_swap(
                     LiquidityPoolKeys::from(buy_transaction.key_z),
@@ -55,9 +53,7 @@ async fn receive_trades() {
                 ).await;
             }
             Some("sell") => {
-                println!("Selling token...");
                 let sell_transaction: SellTransaction = serde_json::from_value(trade_info).unwrap();
-                println!("Sell transaction: {:?}", sell_transaction);
                 let _signature = sell::confirm::confirm_sell(&sell_transaction).await;
             }
             _ => println!("Unknown trade type"),
