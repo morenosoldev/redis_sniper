@@ -9,7 +9,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use price::get_current_sol_price;
 use utils::calculate_sol_amount_received;
-use std::str::FromStr;
 use std::error::Error;
 use solana_transaction_status::UiTransactionEncoding;
 use mongodb::bson::DateTime;

@@ -63,7 +63,7 @@ async fn receive_trades() {
 fn main() {
     dotenv().ok();
     // Spawn a new thread for receiving trades
-    let receive_handle = thread::spawn(move || {
+    let _receive_handle = thread::spawn(move || {
         tokio::runtime::Runtime::new().unwrap().block_on(receive_trades());
     });
 

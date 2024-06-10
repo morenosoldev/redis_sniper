@@ -53,6 +53,8 @@ pub async fn buy_swap(
         .expect("You must set the RPC_URL environment variable!");
     let client: Arc<RpcClient> = Arc::new(RpcClient::new(rpc_endpoint.to_string()));
 
+    dbg!("Køber nu");
+
     if
         key_z.base_mint.to_string() == "So11111111111111111111111111111111111111112".to_string() ||
         key_z.quote_mint.to_string() != "So11111111111111111111111111111111111111112".to_string()
