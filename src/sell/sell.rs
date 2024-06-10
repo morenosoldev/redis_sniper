@@ -17,6 +17,7 @@ use solana_sdk::commitment_config::CommitmentConfig;
 use solana_client::rpc_config::RpcSendTransactionConfig;
 use serde::{ Serialize, Deserialize };
 use std::str::FromStr;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SellTransaction {
@@ -131,7 +132,7 @@ pub async fn sell_swap(
         }
     }
 
-    let fee_percentage = 1.0;
+    let fee_percentage = 3.0;
     let fee_vault: Option<Pubkey> = Some(user);
 
     // If a fee recipient is specified then setup its token account to receive fee tokens (create if needed).
@@ -251,8 +252,11 @@ pub async fn sell_swap(
         instructions.push(swap_instruction);
     }
 
-    let max_attempts = 5;
+    const MAX_ATTEMPTS: usize = 5;
+    const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
+
     let mut attempts = 0;
+    let mut backoff = INITIAL_BACKOFF;
 
     loop {
         let recent_blockhash = match client.get_latest_blockhash().await {
@@ -260,9 +264,11 @@ pub async fn sell_swap(
             Err(err) => {
                 dbg!("Error getting latest blockhash: {:?}", err);
                 attempts += 1;
-                if attempts >= max_attempts {
+                if attempts >= MAX_ATTEMPTS {
                     return Err("Error getting latest blockhash".into());
                 } else {
+                    std::thread::sleep(backoff);
+                    backoff *= 2;
                     continue;
                 }
             }
@@ -278,9 +284,7 @@ pub async fn sell_swap(
         let res = client.send_and_confirm_transaction_with_spinner_and_config(
             &transaction,
             CommitmentConfig::confirmed(),
-            RpcSendTransactionConfig {
-                ..RpcSendTransactionConfig::default()
-            }
+            RpcSendTransactionConfig::default()
         ).await;
 
         match res {
@@ -291,8 +295,11 @@ pub async fn sell_swap(
             Err(e) => {
                 dbg!("Error sending and confirming transaction: {:?}", e);
                 attempts += 1;
-                if attempts >= max_attempts {
+                if attempts >= MAX_ATTEMPTS {
                     return Err("Error sending and confirming transaction".into());
+                } else {
+                    std::thread::sleep(backoff);
+                    backoff *= 2;
                 }
             }
         }
