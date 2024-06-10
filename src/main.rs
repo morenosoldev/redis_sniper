@@ -19,7 +19,11 @@ struct BuyTransaction {
 }
 
 async fn receive_trades() {
-    let client = Client::open("redis://127.0.0.1:6379/").unwrap();
+    let redis_url = std::env
+        ::var("REDIS_URL")
+        .expect("You must set the REDIS_URL environment variable!");
+
+    let client = Client::open(redis_url).unwrap();
     let mut connection = client.get_connection().unwrap();
 
     let mut pubsub = connection.as_pubsub();
