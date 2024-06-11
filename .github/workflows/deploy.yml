@@ -23,10 +23,10 @@ jobs:
         run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
 
       - name: Build Docker image
-        run: docker build -t ${{ secrets.DOCKER_USERNAME }}/redis_sniper:latest .
+        run: docker build -t ${{ secrets.DOCKER_USERNAME }}/main_redis:latest .
 
       - name: Push Docker image to Docker Hub
-        run: docker push ${{ secrets.DOCKER_USERNAME }}/redis_sniper:latest
+        run: docker push ${{ secrets.DOCKER_USERNAME }}/main_redis:latest
 
   deploy:
     runs-on: ubuntu-latest
@@ -51,7 +51,7 @@ jobs:
           key: ${{ secrets.VPS_KEY }}
           script: |
             docker login -u "${{ secrets.DOCKER_USERNAME }}" -p "${{ secrets.DOCKER_PASSWORD }}"
-            docker pull ${{ secrets.DOCKER_USERNAME }}/redis_sniper:latest
+            docker pull ${{ secrets.DOCKER_USERNAME }}/main_redis:latest
             if [ "$(docker ps -a -q -f name=redis_main)" ]; then
               docker stop redis_main
               docker rm redis_main
@@ -63,4 +63,4 @@ jobs:
              -e "WSS_URL=${{ secrets.WSS_URL }}" \
              -e "BIRDEYE_API=${{ secrets.BIRDEYE_API }}" \
              -e "REDIS_URL=${{ secrets.REDIS_URL }}" \
-              ${{ secrets.DOCKER_USERNAME }}/redis_sniper:latest
+              ${{ secrets.DOCKER_USERNAME }}/main_redis:latest
