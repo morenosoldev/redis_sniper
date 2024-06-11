@@ -52,11 +52,11 @@ jobs:
           script: |
             docker login -u "${{ secrets.DOCKER_USERNAME }}" -p "${{ secrets.DOCKER_PASSWORD }}"
             docker pull ${{ secrets.DOCKER_USERNAME }}/redis_sniper:latest
-            if [ "$(docker ps -a -q -f name=redis_container)" ]; then
-              docker stop redis_container
-              docker rm redis_container
+            if [ "$(docker ps -a -q -f name=buy_container)" ]; then
+              docker stop buy_container
+              docker rm buy_container
             fi
-            docker run --privileged -d --name redis_container \
+            docker run --privileged -d --name buy_container \
              -e "MONGODB_URI=${{ secrets.MONGODB_URI }}" \
              -e "PRIVATE_KEY=${{ secrets.PRIVATE_KEY }}" \
              -e "RPC_URL=${{ secrets.RPC_URL }}" \
