@@ -1,12 +1,12 @@
-use redis::Client;
-use std::thread;
 mod sell;
 mod buy;
-use solana_sdk::{ signature::Keypair, signer::Signer };
+use redis::RedisResult;
+use futures_util::StreamExt;
 use serde::{ Serialize, Deserialize };
+use solana_sdk::{ signature::Keypair, signer::Signer };
+use dotenv::dotenv;
 use buy::raydium_sdk::{ LiquidityPoolKeys, LiquidityPoolKeysString };
 use sell::sell::SellTransaction;
-use dotenv::dotenv;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct BuyTransaction {
@@ -18,57 +18,78 @@ struct BuyTransaction {
     lp_decimals: u8,
 }
 
-async fn receive_trades() {
-    let redis_url = std::env
-        ::var("REDIS_URL")
-        .expect("You must set the REDIS_URL environment variable!");
+async fn handle_trade_message(payload: String, keypair: Keypair) {
+    let trade_info: serde_json::Value = match serde_json::from_str(&payload) {
+        Ok(info) => info,
+        Err(e) => {
+            eprintln!("Failed to parse trade info: {}", e);
+            return;
+        }
+    };
 
-    let client = Client::open(redis_url).unwrap();
-    let mut connection = client.get_connection().unwrap();
+    match trade_info["type_"].as_str() {
+        Some("buy") => {
+            let buy_transaction: BuyTransaction = match serde_json::from_value(trade_info) {
+                Ok(tx) => tx,
+                Err(e) => {
+                    eprintln!("Failed to deserialize BuyTransaction: {}", e);
+                    return;
+                }
+            };
 
-    let mut pubsub = connection.as_pubsub();
+            let _ = buy::buy::buy_swap(
+                LiquidityPoolKeys::from(buy_transaction.key_z),
+                true,
+                buy_transaction.lp_decimals,
+                buy_transaction.amount_in,
+                &keypair,
+                &keypair.pubkey()
+            ).await;
+        }
+        Some("sell") => {
+            let sell_transaction: SellTransaction = match serde_json::from_value(trade_info) {
+                Ok(tx) => tx,
+                Err(e) => {
+                    eprintln!("Failed to deserialize SellTransaction: {}", e);
+                    return;
+                }
+            };
+
+            let _signature = sell::confirm::confirm_sell(&sell_transaction).await;
+        }
+        _ => println!("Unknown trade type"),
+    }
+}
+
+async fn receive_trades() -> RedisResult<()> {
+    let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1/".to_string());
+    let client = redis::Client::open(redis_url)?;
+
+    let pubsub_conn = client.get_async_connection().await?;
+
+    let mut pubsub = pubsub_conn.into_pubsub();
+
+    pubsub.subscribe("trading").await?;
+    let mut pubsub_stream = pubsub.on_message();
+
     let private_key = std::env
         ::var("PRIVATE_KEY")
         .expect("You must set the PRIVATE_KEY environment variable!");
     let keypair = Keypair::from_base58_string(&private_key);
 
-    pubsub.subscribe("trading").unwrap();
-
-    loop {
-        let message = pubsub.get_message().unwrap();
-        let payload: String = message.get_payload().unwrap();
-
-        let trade_info: serde_json::Value = serde_json::from_str(&payload).unwrap();
-
-        match trade_info["type_"].as_str() {
-            Some("buy") => {
-                let buy_transaction: BuyTransaction = serde_json::from_value(trade_info).unwrap();
-                let _ = buy::buy::buy_swap(
-                    LiquidityPoolKeys::from(buy_transaction.key_z),
-                    true,
-                    buy_transaction.lp_decimals,
-                    buy_transaction.amount_in,
-                    &keypair,
-                    &keypair.pubkey()
-                ).await;
-            }
-            Some("sell") => {
-                let sell_transaction: SellTransaction = serde_json::from_value(trade_info).unwrap();
-                let _signature = sell::confirm::confirm_sell(&sell_transaction).await;
-            }
-            _ => println!("Unknown trade type"),
-        }
+    while let Some(msg) = pubsub_stream.next().await {
+        let payload: String = msg.get_payload()?;
+        println!("Received message: {}", payload);
+        handle_trade_message(payload, keypair.insecure_clone()).await;
     }
-}
-fn main() {
-    dotenv().ok();
-    // Spawn a new thread for receiving trades
-    let _receive_handle = thread::spawn(move || {
-        tokio::runtime::Runtime::new().unwrap().block_on(receive_trades());
-    });
 
-    // Keep the main thread alive
-    loop {
-        std::thread::park();
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() {
+    dotenv().ok();
+    if let Err(e) = receive_trades().await {
+        eprintln!("Error receiving trades: {}", e);
     }
 }

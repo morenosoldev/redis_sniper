@@ -5,10 +5,13 @@ edition = "2021"
 
 [dependencies]
 borsh = "0.9.3"
-redis = { version = "0.25.3", features = ["tokio-comp"] }
+redis = { version = "0.19.0", features = [ "tls", "tokio-native-tls-comp", "tokio-comp", "connection-manager"]  }
 solana-sdk = "1.8"
 bincode = "1.3.3"
 solana-client = "1.18.12"
+futures-util = "0.3"
+deadpool-redis = "0.12.0"
+deadpool = "0.9.5"
 spl-token-client = "0.8.0"
 spl-token = "4.0.0"
 solana-account-decoder = "1.10.20"
@@ -18,7 +21,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 once_cell = "1.10.0"
 thiserror = "1.0"
-tokio = { version = "1.5", features = ["full"] }
+tokio = { version = "1.5",features = ["macros", "rt-multi-thread", "time"]}
 regex = "1.10.4"
 reqwest = { version = "0.11", features = ["json"] }
 mongodb = "2.1"
