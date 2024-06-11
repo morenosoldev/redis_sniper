@@ -79,7 +79,7 @@ async fn receive_trades() -> RedisResult<()> {
 
     while let Some(msg) = pubsub_stream.next().await {
         let payload: String = msg.get_payload()?;
-        println!("Received message: {}", payload);
+        println!("Received msessage: {}", payload);
         handle_trade_message(payload, keypair.insecure_clone()).await;
     }
 
