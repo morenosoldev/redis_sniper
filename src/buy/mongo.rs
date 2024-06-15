@@ -34,6 +34,7 @@ pub struct BuyTransaction {
     pub amount: f64,
     pub sol_amount: f64,
     pub sol_price: f64,
+    pub usd_amount: f64,
     pub entry_price: f64,
     pub token_metadata: TokenMetadata,
     pub created_at: DateTime,

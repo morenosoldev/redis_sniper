@@ -239,6 +239,8 @@ pub async fn buy_swap(
                                 let current_sol_price =
                                     get_current_sol_price().await.unwrap_or_default();
 
+                                let usd_amount = sol_amount * current_sol_price;
+
                                 // Calculate the buy price in USD
                                 let buy_price_usd = buy_price_per_token_in_sol * current_sol_price;
 
@@ -284,6 +286,7 @@ pub async fn buy_swap(
                                     amount,
                                     sol_amount,
                                     sol_price: current_sol_price,
+                                    usd_amount,
                                     token_metadata: token_metadata.clone(),
                                     entry_price: buy_price_usd,
                                     transaction_type: TransactionType::LongTermHold,
