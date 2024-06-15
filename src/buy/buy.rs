@@ -168,26 +168,28 @@ pub async fn buy_swap(
     )?;
     instructions.push(swap_instruction);
 
-    let recent_blockhash = match client.get_latest_blockhash().await {
-        Ok(blockhash) => blockhash,
-        Err(err) => {
-            return Err(
-                SwapError::TransactionError(format!("Error getting latest blockhash: {:?}", err))
-            );
-        }
-    };
-
-    let transaction = Transaction::new_signed_with_payer(
-        &instructions,
-        Some(&keypair_arc.pubkey()),
-        &[&keypair_arc],
-        recent_blockhash
-    );
-
     loop {
         if retry_count > max_retries {
             return Err(SwapError::TransactionError("Max retries exceeded".to_string()));
         }
+
+        let recent_blockhash = match client.get_latest_blockhash().await {
+            Ok(blockhash) => blockhash,
+            Err(err) => {
+                return Err(
+                    SwapError::TransactionError(
+                        format!("Error getting latest blockhash: {:?}", err)
+                    )
+                );
+            }
+        };
+
+        let transaction = Transaction::new_signed_with_payer(
+            &instructions,
+            Some(&keypair_arc.pubkey()),
+            &[&keypair_arc],
+            recent_blockhash
+        );
 
         let result = client.send_and_confirm_transaction_with_spinner_and_config(
             &transaction,
