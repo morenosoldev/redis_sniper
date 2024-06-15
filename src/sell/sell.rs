@@ -94,6 +94,10 @@ pub async fn sell_swap(
     // TODO: If input tokens is the native mint(wSOL) and the balance is inadequate, attempt to
     // convert SOL to wSOL.
     let balance = user_in_acct.base.amount;
+
+    if balance == 0 {
+        return Err("User has no balance in the input token account".into());
+    }
     dbg!("User input-tokens ATA balance={}", balance);
     if in_token_client.is_native() && balance < (sell_transaction.amount as u64) {
         let transfer_amt = (sell_transaction.amount as u64) - balance;
