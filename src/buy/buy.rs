@@ -1,58 +1,62 @@
 use super::raydium_sdk;
 use super::utils;
-use super::spltoken;
 use super::price;
 use super::mongo;
-use solana_client::rpc_client::RpcClient;
+use solana_client::nonblocking::rpc_client::RpcClient;
 use price::get_current_sol_price;
 use raydium_sdk::LiquidityPoolKeys;
-use raydium_sdk::make_swap_fixed_in_instruction;
-use raydium_sdk::UserKeys;
-use raydium_sdk::LiquiditySwapFixedInInstructionParamsV4;
+use solana_sdk::instruction::Instruction;
 use solana_sdk::signature::Keypair;
 use solana_sdk::commitment_config::CommitmentConfig;
-use solana_sdk::pubkey::Pubkey;
-use spltoken::get_or_create_associated_token_account;
 use mongo::{ TokenInfo, BuyTransaction, MongoHandler, TransactionType };
 use std::time::Duration;
-use std::str::FromStr;
-use thiserror::Error;
 use utils::{ get_second_instruction_amount, get_token_metadata };
-use spl_associated_token_account::instruction::create_associated_token_account;
-use solana_sdk::compute_budget::ComputeBudgetInstruction;
 use solana_sdk::transaction::Transaction;
 use solana_transaction_status::option_serializer::OptionSerializer;
 use solana_transaction_status::UiInnerInstructions;
 use solana_transaction_status::UiTransactionEncoding;
 use mongodb::bson::DateTime;
 use std::sync::Arc;
+use spl_token_client::token::Token;
+use spl_token_client::client::{ ProgramClient, ProgramRpcClient, ProgramRpcClientSendTransaction };
+use solana_sdk::signature::Signer;
+use raydium_contract_instructions::amm_instruction as amm;
+use solana_client::rpc_config::RpcSendTransactionConfig;
+use solana_sdk::program_error::ProgramError;
+use utils::get_or_create_ata_for_token_in_and_out_with_balance;
 
-#[derive(Debug, Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum SwapError {
     #[error("Transaction error: {0}")] TransactionError(String),
     #[error("Token error: {0}")] TokenError(String),
     #[error("MongoDB error: {0}")] MongoDBError(String),
     #[error("Invalid transaction data")]
     InvalidTransactionData,
+    #[error("Program error: {0}")] ProgramError(#[from] ProgramError), // Add conversion from ProgramError
 }
 
 pub async fn buy_swap(
     key_z: LiquidityPoolKeys,
-    direction: bool,
     lp_decimals: u8,
-    sol_amount: f64,
-    key_payer: &Keypair,
-    wallet_address: &Pubkey
+    sol_amount: f64
 ) -> Result<String, SwapError> {
     let mut retry_count = 0;
     let max_retries = 24;
-    let retry_delay = Duration::from_secs(2);
+    let retry_delay = Duration::from_secs(8);
+
+    let private_key = std::env
+        ::var("PRIVATE_KEY")
+        .expect("You must set the PRIVATE_KEY environment variable!");
+    let keypair = Keypair::from_base58_string(&private_key);
 
     let rpc_endpoint = std::env
         ::var("RPC_URL")
         .expect("You must set the RPC_URL environment variable!");
     let client: Arc<RpcClient> = Arc::new(RpcClient::new(rpc_endpoint.to_string()));
 
+    let program_client: Arc<dyn ProgramClient<ProgramRpcClientSendTransaction>> = Arc::new(
+        ProgramRpcClient::new(client.clone(), ProgramRpcClientSendTransaction)
+    );
     dbg!("Køber nu");
 
     if
@@ -62,102 +66,134 @@ pub async fn buy_swap(
         return Err(SwapError::InvalidTransactionData);
     }
 
-    let token_account_in = match
-        get_or_create_associated_token_account(
-            &client,
-            key_payer,
-            wallet_address,
-            &key_z.quote_mint
-        )
-    {
-        Ok(account) => account,
-        Err(err) => {
-            return Err(
-                SwapError::TokenError(
-                    format!("Error getting or creating associated token account: {:?}", err)
-                )
-            );
-        }
-    };
+    let keypair_arc = Arc::new(keypair);
 
-    let token_account_out = match
-        get_or_create_associated_token_account(&client, key_payer, wallet_address, &key_z.base_mint)
+    let token_in = Token::new(
+        program_client.clone(),
+        &spl_token::ID,
+        &key_z.quote_mint,
+        None,
+        keypair_arc.clone()
+    );
+    let token_out = Token::new(
+        program_client.clone(),
+        &spl_token::ID,
+        &key_z.base_mint,
+        None,
+        keypair_arc.clone()
+    );
+    let mut instructions: Vec<Instruction> = vec![];
+    let ata_creation_bundle = get_or_create_ata_for_token_in_and_out_with_balance(
+        &token_in,
+        &token_out,
+        keypair_arc.clone()
+    ).await.unwrap();
+
     {
-        Ok(account) => account,
-        Err(err) => {
-            return Err(
-                SwapError::TokenError(
-                    format!("Error getting or creating associated token account: {:?}", err)
-                )
-            );
-        }
-    };
+        instructions.push(
+            solana_sdk::compute_budget::ComputeBudgetInstruction::set_compute_unit_price(25000)
+        );
+        instructions.push(
+            solana_sdk::compute_budget::ComputeBudgetInstruction::set_compute_unit_limit(600000)
+        );
+    }
+    //Create input ATAs if instruction exist
+    if ata_creation_bundle.token_in.instruction.is_some() {
+        println!(
+            "Creating ata for token-in {:?}. ATA is {:?}",
+            token_in.get_address(),
+            ata_creation_bundle.token_in.ata_pubkey
+        );
+        instructions.push(ata_creation_bundle.token_in.instruction.unwrap());
+    }
+    if ata_creation_bundle.token_out.instruction.is_some() {
+        println!(
+            "Creating ata for token-out {:?} ATA is {:?}",
+            token_out.get_address(),
+            ata_creation_bundle.token_out.ata_pubkey
+        );
+        instructions.push(ata_creation_bundle.token_out.instruction.unwrap());
+    }
 
     let amount_in: u64 = (sol_amount * 1_000_000_000.0) as u64;
-    let min_amount_out: u64 = 0;
 
-    create_associated_token_account(
-        &wallet_address,
-        &wallet_address,
-        &key_z.base_mint,
-        &Pubkey::from_str("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA").expect("TOKEN_ID")
-    );
-    let v: u8 = key_z.version;
+    //Send some sol from account to the ata and then call sync native
+    if token_in.is_native() && ata_creation_bundle.token_in.balance < amount_in {
+        println!("Input token is native");
+        let transfer_amount = amount_in - ata_creation_bundle.token_in.balance;
+        let transfer_instruction = solana_sdk::system_instruction::transfer(
+            &keypair_arc.pubkey().clone(),
+            &ata_creation_bundle.token_in.ata_pubkey,
+            transfer_amount
+        );
+        let sync_instruction = spl_token::instruction::sync_native(
+            &spl_token::ID,
+            &ata_creation_bundle.token_in.ata_pubkey
+        )?;
+        instructions.push(transfer_instruction);
+        instructions.push(sync_instruction);
+    } else {
+        //An SPL token is an input. If the ATA token address does not exist, it means that the balance is definately 0.
+        if ata_creation_bundle.token_in.balance < amount_in {
+            dbg!("Input token not native. Checking sufficient balance");
+            return Err(
+                SwapError::TokenError("Insufficient balance in input token account".to_string())
+            );
+        }
+    }
 
-    let user_keys = UserKeys::new(
-        if direction {
-            token_account_in
-        } else {
-            token_account_out
-        },
-        if direction {
-            token_account_out
-        } else {
-            token_account_in
-        },
-        wallet_address.clone()
-    );
-
-    let params = LiquiditySwapFixedInInstructionParamsV4::new(
-        key_z.clone(),
-        user_keys,
+    // Here we are ensuring that the swap is done from SOL to SPL token (quote to base)
+    dbg!("Initializing swap with input tokens as pool quote token");
+    let swap_instruction = amm::swap_base_in(
+        &amm::ID,
+        &key_z.id,
+        &key_z.authority,
+        &key_z.open_orders,
+        &key_z.target_orders,
+        &key_z.base_vault,
+        &key_z.quote_vault,
+        &key_z.market_program_id,
+        &key_z.market_id,
+        &key_z.market_bids,
+        &key_z.market_asks,
+        &key_z.market_event_queue,
+        &key_z.market_base_vault,
+        &key_z.market_quote_vault,
+        &key_z.market_authority,
+        &ata_creation_bundle.token_in.ata_pubkey,
+        &ata_creation_bundle.token_out.ata_pubkey,
+        &keypair_arc.pubkey().clone(),
         amount_in,
-        min_amount_out
+        0
+    )?;
+    instructions.push(swap_instruction);
+
+    let recent_blockhash = match client.get_latest_blockhash().await {
+        Ok(blockhash) => blockhash,
+        Err(err) => {
+            return Err(
+                SwapError::TransactionError(format!("Error getting latest blockhash: {:?}", err))
+            );
+        }
+    };
+
+    let transaction = Transaction::new_signed_with_payer(
+        &instructions,
+        Some(&keypair_arc.pubkey()),
+        &[&keypair_arc],
+        recent_blockhash
     );
-
-    let the_swap_instruction = make_swap_fixed_in_instruction(params, v); // Pass params by reference
-
-    let instructions = vec![
-        ComputeBudgetInstruction::set_compute_unit_price(25000),
-        ComputeBudgetInstruction::set_compute_unit_limit(600000),
-        the_swap_instruction
-    ];
-
-    let mut transaction = Transaction::new_with_payer(&instructions, Some(&wallet_address));
-
-    // Adding a delay to ensure pool readiness
-    tokio::time::sleep(Duration::from_secs(2)).await;
 
     loop {
         if retry_count > max_retries {
             return Err(SwapError::TransactionError("Max retries exceeded".to_string()));
         }
-        let recent_blockhash = match client.get_latest_blockhash() {
-            Ok(blockhash) => blockhash,
-            Err(err) => {
-                return Err(
-                    SwapError::TransactionError(
-                        format!("Error getting latest blockhash: {:?}", err)
-                    )
-                );
-            }
-        };
-        transaction.sign(&[&key_payer], recent_blockhash);
 
-        let result = client.send_and_confirm_transaction_with_spinner_and_commitment(
+        let result = client.send_and_confirm_transaction_with_spinner_and_config(
             &transaction,
-            CommitmentConfig::confirmed()
-        );
+            CommitmentConfig::confirmed(),
+            RpcSendTransactionConfig::default()
+        ).await;
 
         match result {
             Ok(signature) => {
@@ -165,7 +201,9 @@ pub async fn buy_swap(
                 // Retry loop for confirming the transaction
                 let mut confirmed = false;
                 while !confirmed && retry_count <= max_retries {
-                    match client.get_transaction(&signature, UiTransactionEncoding::JsonParsed) {
+                    match
+                        client.get_transaction(&signature, UiTransactionEncoding::JsonParsed).await
+                    {
                         Ok(confirmed_transaction) => {
                             let inner_instructions: Vec<UiInnerInstructions> =
                                 confirmed_transaction.transaction.meta
@@ -296,8 +334,9 @@ pub async fn buy_swap(
                     return Ok(signature.to_string());
                 }
             }
-            Err(_e) => {
+            Err(e) => {
                 retry_count += 1;
+                dbg!("Error sending transaction. Retrying...", e);
                 tokio::time::sleep(retry_delay).await;
             }
         }

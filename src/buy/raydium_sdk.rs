@@ -1,35 +1,7 @@
 use borsh::{ BorshDeserialize, BorshSerialize };
-use once_cell::sync::Lazy;
-use solana_sdk::{ instruction::{ AccountMeta, Instruction }, pubkey::Pubkey };
+use solana_sdk::pubkey::Pubkey;
 use std::str::FromStr;
 use serde::{ Serialize, Deserialize };
-
-pub static TOKEN_PROGRAM_ID: Lazy<Pubkey> = Lazy::new(||
-    Pubkey::from_str("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA").unwrap()
-);
-
-pub static MODEL_DATA_PUBKEY: Lazy<Pubkey> = Lazy::new(||
-    Pubkey::from_str("CDSr3ssLcRB6XYPJwAfFt18MZvEZp4LjHcvzBVZ45duo").unwrap()
-);
-
-#[derive(Debug)]
-pub struct LiquiditySwapFixedInInstructionParamsV4 {
-    pool_keys: LiquidityPoolKeys,
-    user_keys: UserKeys,
-    amount_in: u64,
-    min_amount_out: u64,
-}
-
-impl LiquiditySwapFixedInInstructionParamsV4 {
-    pub fn new(
-        pool_keys: LiquidityPoolKeys,
-        user_keys: UserKeys,
-        amount_in: u64,
-        min_amount_out: u64
-    ) -> Self {
-        LiquiditySwapFixedInInstructionParamsV4 { pool_keys, user_keys, amount_in, min_amount_out }
-    }
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LiquidityPoolKeysString {
@@ -89,19 +61,6 @@ pub struct LiquidityPoolKeys {
     pub market_event_queue: Pubkey,
 }
 
-#[derive(Debug)]
-pub struct UserKeys {
-    token_account_in: Pubkey,
-    token_account_out: Pubkey,
-    owner: Pubkey,
-}
-
-impl UserKeys {
-    pub fn new(token_account_in: Pubkey, token_account_out: Pubkey, owner: Pubkey) -> Self {
-        UserKeys { token_account_in, token_account_out, owner }
-    }
-}
-
 impl From<LiquidityPoolKeysString> for LiquidityPoolKeys {
     fn from(pool_keys: LiquidityPoolKeysString) -> Self {
         LiquidityPoolKeys {
@@ -139,71 +98,6 @@ struct SwapInstructionData {
     instruction: u8,
     amount_in: u64,
     min_amount_out: u64,
-}
-
-pub fn make_swap_fixed_in_instruction(
-    params: LiquiditySwapFixedInInstructionParamsV4,
-    version: u8
-) -> Instruction {
-    let data = (SwapInstructionData {
-        instruction: 9, // Instruction variant identifier
-        amount_in: params.amount_in,
-        min_amount_out: params.min_amount_out,
-    })
-        .try_to_vec()
-        .unwrap(); // Serialize using Borsh
-
-    let mut keys = vec![
-        account_meta_readonly(*TOKEN_PROGRAM_ID, false),
-        account_meta(params.pool_keys.id, false),
-        account_meta_readonly(params.pool_keys.authority, false),
-        account_meta(params.pool_keys.open_orders, false)
-    ];
-    if version == 4 {
-        keys.push(account_meta(params.pool_keys.target_orders, false));
-    }
-    keys.push(account_meta(params.pool_keys.base_vault, false));
-    keys.push(account_meta(params.pool_keys.quote_vault, false));
-    if version == 5 {
-        keys.push(account_meta(*MODEL_DATA_PUBKEY, false));
-    }
-
-    // Serum-related accounts
-    keys.push(account_meta_readonly(params.pool_keys.market_program_id, false));
-    keys.push(account_meta(params.pool_keys.market_id, false));
-    keys.push(account_meta(params.pool_keys.market_bids, false));
-    keys.push(account_meta(params.pool_keys.market_asks, false));
-    keys.push(account_meta(params.pool_keys.market_event_queue, false));
-    keys.push(account_meta(params.pool_keys.market_base_vault, false));
-    keys.push(account_meta(params.pool_keys.market_quote_vault, false));
-    keys.push(account_meta_readonly(params.pool_keys.market_authority, false));
-
-    // User-related accounts
-    keys.push(account_meta(params.user_keys.token_account_in, false));
-    keys.push(account_meta(params.user_keys.token_account_out, false));
-    keys.push(account_meta_readonly(params.user_keys.owner, true));
-
-    Instruction {
-        program_id: params.pool_keys.program_id,
-        accounts: keys,
-        data,
-    }
-}
-
-pub fn account_meta(pubkey: Pubkey, is_signer: bool) -> AccountMeta {
-    AccountMeta {
-        pubkey,
-        is_signer,
-        is_writable: true, // Set to true
-    }
-}
-
-pub fn account_meta_readonly(pubkey: Pubkey, is_signer: bool) -> AccountMeta {
-    AccountMeta {
-        pubkey,
-        is_signer,
-        is_writable: false, // Set to false for readonly as in radium js SDK idk lmao
-    }
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Debug)]

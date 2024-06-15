@@ -133,7 +133,7 @@ pub async fn sell_swap(
     }
 
     let fee_percentage = 3.0;
-    let fee_vault: Option<Pubkey> = Some(user);
+    let fee_vault: Option<Pubkey> = None;
 
     // If a fee recipient is specified then setup its token account to receive fee tokens (create if needed).
     // Fee tokens are always paid in the input token.

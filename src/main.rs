@@ -3,10 +3,10 @@ mod buy;
 use redis::RedisResult;
 use futures_util::StreamExt;
 use serde::{ Serialize, Deserialize };
-use solana_sdk::{ signature::Keypair, signer::Signer };
 use dotenv::dotenv;
 use buy::raydium_sdk::{ LiquidityPoolKeys, LiquidityPoolKeysString };
 use sell::sell::SellTransaction;
+use tokio::time::{ sleep, Duration };
 
 #[derive(Debug, Serialize, Deserialize)]
 struct BuyTransaction {
@@ -18,7 +18,7 @@ struct BuyTransaction {
     lp_decimals: u8,
 }
 
-async fn handle_trade_message(payload: String, keypair: Keypair) {
+async fn handle_trade_message(payload: String) {
     let trade_info: serde_json::Value = match serde_json::from_str(&payload) {
         Ok(info) => info,
         Err(e) => {
@@ -29,61 +29,102 @@ async fn handle_trade_message(payload: String, keypair: Keypair) {
 
     match trade_info["type_"].as_str() {
         Some("buy") => {
-            let buy_transaction: BuyTransaction = match serde_json::from_value(trade_info) {
-                Ok(tx) => tx,
+            let buy_transaction: Result<BuyTransaction, serde_json::Error> = serde_json::from_value(
+                trade_info.clone()
+            );
+            match buy_transaction {
+                Ok(tx) => {
+                    match
+                        buy::buy::buy_swap(
+                            LiquidityPoolKeys::from(tx.key_z),
+                            tx.lp_decimals,
+                            tx.amount_in
+                        ).await
+                    {
+                        Ok(result) => {
+                            println!("Buy swap successful: {}", result);
+                            // Proceed with any further processing if needed
+                        }
+                        Err(err) => {
+                            eprintln!("Buy swap error: {:?}", err);
+                            // Handle the error as per your application's logic
+                        }
+                    }
+                }
                 Err(e) => {
                     eprintln!("Failed to deserialize BuyTransaction: {}", e);
                     return;
                 }
-            };
-
-            let _ = buy::buy::buy_swap(
-                LiquidityPoolKeys::from(buy_transaction.key_z),
-                true,
-                buy_transaction.lp_decimals,
-                buy_transaction.amount_in,
-                &keypair,
-                &keypair.pubkey()
-            ).await;
+            }
         }
         Some("sell") => {
-            let sell_transaction: SellTransaction = match serde_json::from_value(trade_info) {
-                Ok(tx) => tx,
+            let sell_transaction: Result<
+                SellTransaction,
+                serde_json::Error
+            > = serde_json::from_value(trade_info.clone());
+            match sell_transaction {
+                Ok(tx) => {
+                    match sell::confirm::confirm_sell(&tx).await {
+                        Ok(_) => {
+                            println!("Sell confirmed successfully");
+                            // Proceed with any further processing if needed
+                        }
+                        Err(err) => {
+                            eprintln!("Sell confirmation error: {:?}", err);
+                            // Handle the error as per your application's logic
+                        }
+                    }
+                }
                 Err(e) => {
                     eprintln!("Failed to deserialize SellTransaction: {}", e);
                     return;
                 }
-            };
-
-            let _signature = sell::confirm::confirm_sell(&sell_transaction).await;
+            }
         }
-        _ => println!("Unknown trade type"),
+        _ => {
+            eprintln!("Invalid transaction type or missing 'type_' field");
+            return;
+        }
     }
 }
 
 async fn receive_trades() -> RedisResult<()> {
-    let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1/".to_string());
-    let client = redis::Client::open(redis_url)?;
+    let redis_url = std::env
+        ::var("REDIS_URL")
+        .expect("You must set the REDIS_URL environment variable");
 
-    let pubsub_conn = client.get_async_connection().await?;
+    loop {
+        let client = redis::Client::open(redis_url.clone()).expect("Failed to create Redis client");
 
-    let mut pubsub = pubsub_conn.into_pubsub();
+        match client.get_multiplexed_async_connection().await {
+            Ok(_connection) => {
+                let mut pubsub = client.get_async_pubsub().await.unwrap();
+                if let Err(e) = pubsub.subscribe("trading").await {
+                    eprintln!("Failed to subscribe to 'trading': {}", e);
+                    sleep(Duration::from_secs(5)).await;
+                    continue;
+                }
 
-    pubsub.subscribe("trading").await?;
-    let mut pubsub_stream = pubsub.on_message();
+                let mut pubsub_stream = pubsub.on_message();
+                while let Some(msg) = pubsub_stream.next().await {
+                    let payload: String = match msg.get_payload() {
+                        Ok(p) => p,
+                        Err(e) => {
+                            eprintln!("Failed to get payload from message: {}", e);
+                            continue;
+                        }
+                    };
+                    println!("Received message: {}", payload);
+                    handle_trade_message(payload).await;
+                }
+            }
+            Err(e) => {
+                eprintln!("Error connecting to Redis: {}", e);
+            }
+        }
 
-    let private_key = std::env
-        ::var("PRIVATE_KEY")
-        .expect("You must set the PRIVATE_KEY environment variable!");
-    let keypair = Keypair::from_base58_string(&private_key);
-
-    while let Some(msg) = pubsub_stream.next().await {
-        let payload: String = msg.get_payload()?;
-        println!("Received msessage: {}", payload);
-        handle_trade_message(payload, keypair.insecure_clone()).await;
+        sleep(Duration::from_secs(5)).await;
     }
-
-    Ok(())
 }
 
 #[tokio::main]
