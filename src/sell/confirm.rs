@@ -26,8 +26,8 @@ pub async fn confirm_sell(
     })?;
 
     let mut retry_count = 0;
-    let max_retries = 24;
-    let retry_delay = Duration::from_secs(15);
+    let max_retries = 10;
+    let retry_delay = Duration::from_secs(22);
 
     let usd_sol_price = get_current_sol_price().await?;
 
