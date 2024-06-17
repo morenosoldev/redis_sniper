@@ -26,8 +26,8 @@ pub async fn confirm_sell(
     })?;
 
     let mut retry_count = 0;
-    let max_retries = 10;
-    let retry_delay = Duration::from_secs(22);
+    let max_retries = 6;
+    let retry_delay = Duration::from_secs(18);
 
     let usd_sol_price = get_current_sol_price().await?;
 
@@ -95,6 +95,6 @@ pub async fn confirm_sell(
     if confirmed {
         return Ok(());
     } else {
-        return Err("Transaction not confirmed after 24 retries".into());
+        return Err("Transaction not confirmed after 8 retries".into());
     }
 }
