@@ -85,15 +85,9 @@ pub async fn confirm_sell(
                 confirmed = true;
             }
             Err(err) => {
-                if
-                    err.to_string().contains("not confirmed") ||
-                    err.to_string().contains("invalid type: null")
-                {
-                    retry_count += 1;
-                    tokio::time::sleep(retry_delay).await;
-                } else {
-                    break;
-                }
+                eprintln!("Error fetching transaction: {:?}", err);
+                retry_count += 1;
+                tokio::time::sleep(retry_delay).await;
             }
         }
     }
