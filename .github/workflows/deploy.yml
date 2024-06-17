@@ -62,5 +62,6 @@ jobs:
              -e "RPC_URL=${{ secrets.RPC_URL }}" \
              -e "WSS_URL=${{ secrets.WSS_URL }}" \
              -e "BIRDEYE_API=${{ secrets.BIRDEYE_API }}" \
+             -e "HELIUS_API_KEY=${{ secrets.HELIUS_API_KEY }}" \
              -e "REDIS_URL=${{ secrets.REDIS_URL }}" \
               ${{ secrets.DOCKER_USERNAME }}/main_redis:latest

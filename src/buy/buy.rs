@@ -36,7 +36,7 @@ pub async fn buy_swap(
 ) -> Result<String, SwapError> {
     let api_key: String = std::env
         ::var("HELIUS_API_KEY")
-        .expect("You must set the PRIVATE_KEY environment variable!");
+        .expect("You must set the HELIUS_API_KEY environment variable!");
     let cluster: Cluster = Cluster::MainnetBeta;
     let helius: Helius = Helius::new(&api_key, cluster).unwrap();
 
