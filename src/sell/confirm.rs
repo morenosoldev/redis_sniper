@@ -1,5 +1,4 @@
 use super::mongo;
-use super::sell::sell_swap;
 use super::sell::SellTransaction;
 use super::price;
 use super::utils;
@@ -12,8 +11,12 @@ use utils::calculate_sol_amount_received;
 use std::error::Error;
 use solana_transaction_status::UiTransactionEncoding;
 use mongodb::bson::DateTime;
+use solana_sdk::signature::Signature;
 
-pub async fn confirm_sell(sell_transaction: &SellTransaction) -> Result<(), Box<dyn Error>> {
+pub async fn confirm_sell(
+    signature: &Signature,
+    sell_transaction: &SellTransaction
+) -> Result<(), Box<dyn Error>> {
     let rpc_endpoint = std::env
         ::var("RPC_URL")
         .expect("You must set the RPC_URL environment variable!");
@@ -24,9 +27,8 @@ pub async fn confirm_sell(sell_transaction: &SellTransaction) -> Result<(), Box<
 
     let mut retry_count = 0;
     let max_retries = 24;
-    let retry_delay = Duration::from_secs(2);
+    let retry_delay = Duration::from_secs(15);
 
-    let signature = sell_swap(sell_transaction).await?;
     let usd_sol_price = get_current_sol_price().await?;
 
     let mut confirmed = false;
@@ -41,7 +43,7 @@ pub async fn confirm_sell(sell_transaction: &SellTransaction) -> Result<(), Box<
                 let profit_percentage = (profit / (sell_transaction.sol_amount as f64)) * 100.0;
 
                 // Format and print profit percentage
-                let profit_percentage_str = format!("{:.4}", profit_percentage); // Display 4 decimal places
+                let profit_percentage_str = format!("{:.4}", profit_percentage);
 
                 // If you need to use the profit percentage as a number
                 let profit_percentage_value: f64 = profit_percentage_str

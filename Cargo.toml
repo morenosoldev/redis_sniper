@@ -28,5 +28,6 @@ spl-associated-token-account ="2.3.0"
 futures = "0.3"
 dotenv = "0.15.0"
 mpl-token-metadata = "4.1.2"
+helius = "0.2.0"
 
 

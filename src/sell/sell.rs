@@ -1,8 +1,9 @@
+use crate::sell::confirm::confirm_sell;
 use super::utils;
 use super::mongo::TokenMetadata;
+use helius::error::HeliusError;
 use spl_token_client::client::{ ProgramClient, ProgramRpcClient, ProgramRpcClientSendTransaction };
 use spl_token_client::token::Token;
-use solana_sdk::instruction::Instruction;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signer;
 use solana_sdk::signature::Signature;
@@ -13,11 +14,13 @@ use solana_sdk::transaction::Transaction;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use spl_token_client::token::TokenError;
 use solana_sdk::signature::Keypair;
-use solana_sdk::commitment_config::CommitmentConfig;
 use solana_client::rpc_config::RpcSendTransactionConfig;
 use serde::{ Serialize, Deserialize };
 use std::str::FromStr;
 use std::time::Duration;
+use solana_transaction_status::UiTransactionEncoding;
+use helius::types::*;
+use helius::Helius;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SellTransaction {
@@ -35,6 +38,11 @@ pub struct SellTransaction {
 pub async fn sell_swap(
     sell_transaction: &SellTransaction
 ) -> Result<Signature, Box<dyn std::error::Error>> {
+    let api_key: String = std::env
+        ::var("HELIUS_API_KEY")
+        .expect("You must set the PRIVATE_KEY environment variable!");
+    let cluster: Cluster = Cluster::MainnetBeta;
+    let helius: Helius = Helius::new(&api_key, cluster).unwrap();
     let private_key = std::env
         ::var("PRIVATE_KEY")
         .expect("You must set the PRIVATE_KEY environment variable!");
@@ -136,67 +144,9 @@ pub async fn sell_swap(
         }
     }
 
-    let fee_percentage = 3.0;
-    let fee_vault: Option<Pubkey> = None;
-
-    // If a fee recipient is specified then setup its token account to receive fee tokens (create if needed).
-    // Fee tokens are always paid in the input token.
-    let mut fee_vault_token_account = None;
-    if let Some(vault_key) = fee_vault {
-        let vault_in_token_account = in_token_client.get_associated_token_address(&vault_key);
-        dbg!("Vault's input-token ATA={}", vault_in_token_account);
-        match in_token_client.get_account_info(&vault_in_token_account).await {
-            Ok(_) => {
-                dbg!("Vault ATA for input tokens exists. Skipping creation.");
-            }
-            Err(TokenError::AccountNotFound) | Err(TokenError::AccountInvalidOwner) => {
-                dbg!("Vault's input-tokens ATA does not exist. Creating..");
-                in_token_client.create_associated_token_account(&vault_key).await?;
-            }
-            Err(error) => {
-                return Err(error.into()); // Return the error to handle it properly
-            }
-        }
-        fee_vault_token_account = Some(vault_in_token_account);
-    }
-
     let mut instructions = vec![];
 
-    {
-        instructions.push(
-            solana_sdk::compute_budget::ComputeBudgetInstruction::set_compute_unit_price(25000)
-        );
-        instructions.push(
-            solana_sdk::compute_budget::ComputeBudgetInstruction::set_compute_unit_limit(600000)
-        );
-    }
-
-    let mut swap_amount_in = sell_transaction.amount;
-    if let Some(vault_token_account) = fee_vault_token_account {
-        let percent = fee_percentage;
-        if percent >= 100.0 {
-            return Err("Fee percentage must be less than 100".into());
-        }
-        let fee = ((percent / 100.0) * (sell_transaction.amount as f64)).trunc() as u64;
-        swap_amount_in -= fee;
-        // Append instruction to transfer fees to fee vault.
-        let fee_transfer_instruction: Instruction = spl_token::instruction::transfer(
-            &spl_token::ID,
-            &user_in_token_account,
-            &vault_token_account,
-            &user,
-            &[&user],
-            fee
-        )?;
-        dbg!(
-            "Appending fee-transfer instruction. Fee-percentage={}, Fee-amount={}. Fee-vault-owner={}. Fee-vault-ata={}",
-            percent,
-            fee,
-            fee_vault,
-            vault_token_account
-        );
-        instructions.push(fee_transfer_instruction);
-    }
+    let swap_amount_in = sell_transaction.amount;
 
     if pool_info.base_mint == Pubkey::from_str(&sell_transaction.mint).unwrap() {
         dbg!("Initializing swap with input tokens as pool base token");
@@ -256,56 +206,90 @@ pub async fn sell_swap(
         instructions.push(swap_instruction);
     }
 
-    const MAX_ATTEMPTS: usize = 5;
-    const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
+    let max_retries = 12;
+    let retry_delay = Duration::from_secs(5);
 
-    let mut attempts = 0;
-    let mut backoff = INITIAL_BACKOFF;
+    // Create the SmartTransactionConfig
+    let config = SmartTransactionConfig {
+        instructions,
+        signers: vec![&keypair_arc],
+        send_options: RpcSendTransactionConfig {
+            skip_preflight: true,
+            preflight_commitment: None,
+            encoding: None,
+            max_retries: Some(2),
+            min_context_slot: None,
+        },
+        lookup_tables: None,
+    };
 
-    loop {
-        let recent_blockhash = match client.get_latest_blockhash().await {
-            Ok(blockhash) => blockhash,
-            Err(err) => {
-                dbg!("Error getting latest blockhash: {:?}", err);
-                attempts += 1;
-                if attempts >= MAX_ATTEMPTS {
-                    return Err("Error getting latest blockhash".into());
-                } else {
-                    std::thread::sleep(backoff);
-                    backoff *= 2;
-                    continue;
+    match helius.send_smart_transaction(config).await {
+        Ok(signature) => {
+            dbg!("Transaction sent successfully: {}", signature);
+            let mut retry_count = 0;
+            let mut confirmed = false;
+
+            while !confirmed && retry_count <= max_retries {
+                match client.get_transaction(&signature, UiTransactionEncoding::JsonParsed).await {
+                    Ok(_confirmed_transaction) => {
+                        confirm_sell(&signature, sell_transaction).await?;
+                        confirmed = true;
+                    }
+                    Err(err) => {
+                        eprintln!("Error getting confirmed transaction: {:?}", err);
+                        if
+                            err.to_string().contains("not confirmed") ||
+                            err.to_string().contains("invalid type: null")
+                        {
+                            retry_count += 1;
+                            tokio::time::sleep(retry_delay).await;
+                        } else {
+                            break;
+                        }
+                    }
                 }
             }
-        };
 
-        let transaction = Transaction::new_signed_with_payer(
-            &instructions,
-            Some(&keypair_arc.pubkey()),
-            &[&keypair_arc],
-            recent_blockhash
-        );
+            return Ok(signature);
+        }
+        Err(e) => {
+            // Check if the error is a timeout (code 408)
+            if e.to_string().contains("408 Request Timeout") {
+                // Attempt to save transaction details even if there was a timeout
+                if let Some(signature) = extract_signature_from_error(&e) {
+                    dbg!("Extracted signature: {}", &signature);
+                    let sig = Signature::from_str(&signature)
+                        .map_err(|err| {
+                            return Box::new(err) as Box<dyn std::error::Error>;
+                        })
+                        .unwrap();
 
-        let res = client.send_and_confirm_transaction_with_spinner_and_config(
-            &transaction,
-            CommitmentConfig::confirmed(),
-            RpcSendTransactionConfig::default()
-        ).await;
-
-        match res {
-            Ok(signature) => {
-                dbg!("Transaction successful with signature: {}", signature);
-                return Ok(signature);
-            }
-            Err(e) => {
-                dbg!("Error sending and confirming transaction: {:?}", e);
-                attempts += 1;
-                if attempts >= MAX_ATTEMPTS {
-                    return Err("Error sending and confirming transaction".into());
+                    confirm_sell(&sig, sell_transaction).await?;
+                    return Ok(sig);
                 } else {
-                    std::thread::sleep(backoff);
-                    backoff *= 2;
+                    return Err(e.into());
                 }
+            } else {
+                return Err(e.into());
             }
         }
     }
+}
+
+fn extract_signature_from_error(error: &HeliusError) -> Option<String> {
+    let error_message = error.to_string();
+    let start_marker = "Transaction ";
+    let end_marker = "'s confirmation timed out";
+
+    // Find the start and end positions
+    let start = error_message.find(start_marker)?;
+    let end = error_message.find(end_marker)?;
+
+    // Calculate the start of the actual signature (after "Transaction " and its length)
+    let start_signature = start + start_marker.len();
+
+    // Extract the substring containing the signature
+    let signature = &error_message[start_signature..end];
+
+    Some(signature.to_string())
 }

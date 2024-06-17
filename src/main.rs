@@ -7,6 +7,7 @@ use dotenv::dotenv;
 use buy::raydium_sdk::{ LiquidityPoolKeys, LiquidityPoolKeysString };
 use sell::sell::SellTransaction;
 use tokio::time::{ sleep, Duration };
+use std::time::Instant;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct BuyTransaction {
@@ -34,6 +35,9 @@ async fn handle_trade_message(payload: String) {
             );
             match buy_transaction {
                 Ok(tx) => {
+                    // Measure time taken for buy swap
+                    let start_time = Instant::now();
+
                     match
                         buy::buy::buy_swap(
                             LiquidityPoolKeys::from(tx.key_z),
@@ -42,7 +46,9 @@ async fn handle_trade_message(payload: String) {
                         ).await
                     {
                         Ok(result) => {
-                            println!("Buy swap successful: {}", result);
+                            let elapsed = start_time.elapsed();
+                            println!("Buy swap successful: {}. Time taken: {:?}", result, elapsed);
+
                             // Proceed with any further processing if needed
                         }
                         Err(err) => {
@@ -64,10 +70,13 @@ async fn handle_trade_message(payload: String) {
             > = serde_json::from_value(trade_info.clone());
             match sell_transaction {
                 Ok(tx) => {
-                    match sell::confirm::confirm_sell(&tx).await {
+                    // Measure time taken for sell confirmation
+                    let start_time = Instant::now();
+
+                    match sell::sell::sell_swap(&tx).await {
                         Ok(_) => {
-                            println!("Sell confirmed successfully");
-                            // Proceed with any further processing if needed
+                            let elapsed = start_time.elapsed();
+                            dbg!("Sell confirmed successfully. Time taken: {:?}", elapsed);
                         }
                         Err(err) => {
                             eprintln!("Sell confirmation error: {:?}", err);
@@ -114,7 +123,6 @@ async fn receive_trades() -> RedisResult<()> {
                             continue;
                         }
                     };
-                    println!("Received message: {}", payload);
                     handle_trade_message(payload).await;
                 }
             }
