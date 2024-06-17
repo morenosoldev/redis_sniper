@@ -218,18 +218,18 @@ pub async fn buy_swap(
 
 fn extract_signature_from_error(error: &HeliusError) -> Option<String> {
     let error_message = error.to_string();
-    let start_marker = "Transaction ";
+    let start_marker =
+        "Transaction confirmation timed out with error code 408 Request Timeout: Transaction ";
     let end_marker = "'s confirmation timed out";
 
     // Find the start and end positions
     let start = error_message.find(start_marker)?;
     let end = error_message.find(end_marker)?;
 
-    // Calculate the start of the actual signature (after "Transaction " and its length)
+    // Calculate the start of the actual signature (after the start marker)
     let start_signature = start + start_marker.len();
 
     // Extract the substring containing the signature
     let signature = &error_message[start_signature..end];
-
     Some(signature.to_string())
 }

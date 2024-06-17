@@ -22,8 +22,8 @@ pub async fn save_buy_details(
     lp_decimals: u8,
     key_z: raydium_sdk::LiquidityPoolKeys
 ) -> Result<(), Box<dyn Error>> {
-    let max_retries = 5;
-    let retry_delay = Duration::from_secs(14);
+    let max_retries = 8;
+    let retry_delay = Duration::from_secs(20);
     let mut retries = 0;
 
     while retries <= max_retries {
