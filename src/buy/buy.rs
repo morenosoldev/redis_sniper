@@ -19,6 +19,7 @@ use helius::Helius;
 use service::save_buy_details;
 use solana_sdk::signature::Signature;
 use std::str::FromStr;
+use solana_sdk::pubkey::Pubkey;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SwapError {
@@ -44,6 +45,8 @@ pub async fn buy_swap(
         ::var("PRIVATE_KEY")
         .expect("You must set the PRIVATE_KEY environment variable!");
     let keypair = Keypair::from_base58_string(&private_key);
+
+    let user = Pubkey::from_str("3rzKBn91t3ttL23by55oo9h5Ag89nCdvFbHwvs58Uj52").unwrap();
 
     let rpc_endpoint = std::env
         ::var("RPC_URL")
@@ -78,6 +81,63 @@ pub async fn buy_swap(
         None,
         keypair_arc.clone()
     );
+
+    let amount_in: u64 = (sol_amount * 1_000_000_000.0) as u64;
+
+    // Get the user's ATA. We don't try to create it as it is expected to exist.
+    let user_in_token_account = token_in.get_associated_token_address(&user);
+    dbg!("User input-tokens ATA={}", user_in_token_account);
+    let user_in_acct = match token_in.get_account_info(&user_in_token_account).await {
+        Ok(account_info) => account_info,
+        Err(err) => {
+            return Err(
+                SwapError::TransactionError(format!("Failed to get user input-tokens ATA: {}", err))
+            );
+        }
+    };
+
+    // TODO: If input tokens is the native mint(wSOL) and the balance is inadequate, attempt to
+    // convert SOL to wSOL.
+    let balance = user_in_acct.base.amount;
+    dbg!("User input-tokens ATA balance={}", balance);
+    if token_in.is_native() && balance < amount_in {
+        let transfer_amt = amount_in - balance;
+
+        let transfer_instruction = solana_sdk::system_instruction::transfer(
+            &user,
+            &user_in_token_account,
+            transfer_amt
+        );
+        let sync_instruction = spl_token::instruction::sync_native(
+            &spl_token::ID,
+            &user_in_token_account
+        )?;
+
+        let intructions = vec![transfer_instruction, sync_instruction];
+        // Create the SmartTransactionConfig
+        let config = SmartTransactionConfig {
+            instructions: intructions,
+            signers: vec![&keypair_arc],
+            send_options: RpcSendTransactionConfig {
+                skip_preflight: true,
+                preflight_commitment: None,
+                encoding: None,
+                max_retries: Some(2),
+                min_context_slot: None,
+            },
+            lookup_tables: None,
+        };
+
+        match helius.send_smart_transaction(config).await {
+            Ok(signature) => {
+                dbg!("Transaction sent successfully: {}", signature);
+            }
+            Err(e) => {
+                return Err(SwapError::TransactionError(e.to_string()));
+            }
+        }
+    }
+
     let mut instructions: Vec<Instruction> = vec![];
     let ata_creation_bundle = get_or_create_ata_for_token_in_and_out_with_balance(
         &token_in,
@@ -92,8 +152,6 @@ pub async fn buy_swap(
     if ata_creation_bundle.token_out.instruction.is_some() {
         instructions.push(ata_creation_bundle.token_out.instruction.unwrap());
     }
-
-    let amount_in: u64 = (sol_amount * 1_000_000_000.0) as u64;
 
     //Send some sol from account to the ata and then call sync native
     if token_in.is_native() && ata_creation_bundle.token_in.balance < amount_in {
