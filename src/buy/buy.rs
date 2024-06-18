@@ -160,8 +160,6 @@ pub async fn buy_swap(
         lookup_tables: None,
     };
 
-    // Send the transaction
-    // Send the optimized transaction
     match helius.send_smart_transaction(config).await {
         Ok(signature) => {
             dbg!("Transaction sent successfully: {}", signature);

@@ -36,11 +36,14 @@ pub async fn confirm_sell(
         match rpc_client.get_transaction(&signature, UiTransactionEncoding::JsonParsed) {
             Ok(confirmed_transaction) => {
                 let sell_price = sell_transaction.current_token_price_usd;
-                let sol_amount = calculate_sol_amount_received(confirmed_transaction).await?;
+                let sol_amount = calculate_sol_amount_received(&confirmed_transaction).await?;
                 let profit = (sol_amount as f64) - (sell_transaction.sol_amount as f64);
                 let profit_usd = profit * usd_sol_price;
-                // Calculate profit percentage
                 let profit_percentage = (profit / (sell_transaction.sol_amount as f64)) * 100.0;
+                let fee = confirmed_transaction.transaction.meta.unwrap().fee;
+
+                let fee_sol = (fee as f64) / 1_000_000_000.0;
+                let fee_usd = fee_sol * usd_sol_price;
 
                 // Format and print profit percentage
                 let profit_percentage_str = format!("{:.4}", profit_percentage);
@@ -64,6 +67,8 @@ pub async fn confirm_sell(
                     sell_price,
                     entry_price: sell_transaction.entry.clone(),
                     token_metadata: sell_transaction.metadata.clone(),
+                    fee_sol: fee_sol,
+                    fee_usd: fee_usd,
                     profit,
                     profit_usd,
                     profit_percentage: profit_percentage_value,

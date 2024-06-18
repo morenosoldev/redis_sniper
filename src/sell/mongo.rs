@@ -34,6 +34,9 @@ pub struct BuyTransaction {
     pub sol_amount: f64,
     pub sol_price: f64,
     pub entry_price: f64,
+    pub usd_amount: f64,
+    pub fee_sol: f64,
+    pub fee_usd: f64,
     pub created_at: DateTime,
     pub transaction_type: TransactionType,
 }
@@ -46,6 +49,8 @@ pub struct SellTransaction {
     pub sol_amount: f64,
     pub sol_price: f64,
     pub sell_price: f64,
+    pub fee_sol: f64,
+    pub fee_usd: f64,
     pub entry_price: f64,
     pub token_metadata: TokenMetadata,
     pub profit: f64,

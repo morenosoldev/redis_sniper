@@ -264,7 +264,7 @@ pub fn get_associated_authority(
 }
 
 pub async fn calculate_sol_amount_received(
-    tx: EncodedConfirmedTransactionWithStatusMeta
+    tx: &EncodedConfirmedTransactionWithStatusMeta
 ) -> Result<f64, Box<dyn std::error::Error>> {
     let inner_instructions: Vec<UiInnerInstructions> = tx.transaction.meta
         .as_ref()

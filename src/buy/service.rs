@@ -60,6 +60,11 @@ pub async fn save_buy_details(
 
                     let usd_amount = sol_amount * current_sol_price;
 
+                    let fee = confirmed_transaction.transaction.meta.unwrap().fee;
+
+                    let fee_sol = (fee as f64) / 1_000_000_000.0;
+                    let fee_usd = fee_sol * current_sol_price;
+
                     // Calculate the buy price in USD
                     let buy_price_usd = buy_price_per_token_in_sol * current_sol_price;
 
@@ -100,6 +105,8 @@ pub async fn save_buy_details(
                         usd_amount,
                         token_metadata: token_metadata.clone(),
                         entry_price: buy_price_usd,
+                        fee_sol,
+                        fee_usd,
                         transaction_type: TransactionType::LongTermHold,
                         created_at: DateTime::now(),
                     };
