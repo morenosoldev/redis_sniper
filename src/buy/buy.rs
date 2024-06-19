@@ -236,9 +236,12 @@ pub async fn buy_swap(
             return Ok(signature.to_string());
         }
         Err(e) => {
+            // Log the error for further investigation
+            dbg!("Error sending transaction: {:?}", &e);
+
             // Check if the error is a timeout (code 408)
             if e.to_string().contains("408 Request Timeout") {
-                // Attempt to save transaction details even if there was a timeout
+                // Attempt to extract the signature from the error
                 if let Some(signature) = extract_signature_from_error(&e) {
                     dbg!("Extracted signature: {}", &signature);
                     let sig = Signature::from_str(&signature).map_err(|err|
@@ -266,6 +269,7 @@ pub async fn buy_swap(
                     )
                 }
             } else {
+                // Handle other types of errors
                 Err(SwapError::TransactionError(e.to_string()))
             }
         }
