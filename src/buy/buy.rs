@@ -212,7 +212,7 @@ pub async fn buy_swap(
             skip_preflight: true,
             preflight_commitment: None,
             encoding: None,
-            max_retries: Some(3),
+            max_retries: Some(4),
             min_context_slot: None,
         },
         lookup_tables: None,

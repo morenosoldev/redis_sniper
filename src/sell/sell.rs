@@ -210,14 +210,14 @@ pub async fn sell_swap(
     let retry_delay = Duration::from_secs(5);
 
     // Create the SmartTransactionConfig
-    let config = SmartTransactionConfig {
+    let config: SmartTransactionConfig = SmartTransactionConfig {
         instructions,
         signers: vec![&keypair_arc],
         send_options: RpcSendTransactionConfig {
             skip_preflight: true,
             preflight_commitment: None,
             encoding: None,
-            max_retries: Some(2),
+            max_retries: Some(4),
             min_context_slot: None,
         },
         lookup_tables: None,
