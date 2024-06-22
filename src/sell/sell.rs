@@ -4,7 +4,6 @@ use super::mongo::TokenMetadata;
 use helius::error::HeliusError;
 use spl_token_client::client::{ ProgramClient, ProgramRpcClient, ProgramRpcClientSendTransaction };
 use spl_token_client::token::Token;
-use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signer;
 use solana_sdk::signature::Signature;
 use std::sync::Arc;
@@ -16,6 +15,7 @@ use spl_token_client::token::TokenError;
 use solana_sdk::signature::Keypair;
 use solana_client::rpc_config::RpcSendTransactionConfig;
 use serde::{ Serialize, Deserialize };
+use solana_sdk::pubkey::Pubkey;
 use std::str::FromStr;
 use std::time::Duration;
 use solana_transaction_status::UiTransactionEncoding;
@@ -59,7 +59,9 @@ pub async fn sell_swap(
         ProgramRpcClient::new(client.clone(), ProgramRpcClientSendTransaction)
     );
 
-    let out_token = Pubkey::from_str("So11111111111111111111111111111111111111112").unwrap();
+    let out_token: Pubkey = Pubkey::from_str(
+        "So11111111111111111111111111111111111111112"
+    ).unwrap();
 
     // Clone the keypair to be able to use it multiple times
     let keypair_arc = Arc::new(keypair);
@@ -211,8 +213,12 @@ pub async fn sell_swap(
 
     // Create the SmartTransactionConfig
     let config: SmartTransactionConfig = SmartTransactionConfig {
-        instructions,
-        signers: vec![&keypair_arc],
+        create_config: CreateSmartTransactionConfig {
+            instructions,
+            signers: vec![&keypair_arc],
+            lookup_tables: None,
+            fee_payer: None,
+        },
         send_options: RpcSendTransactionConfig {
             skip_preflight: true,
             preflight_commitment: None,
@@ -220,7 +226,6 @@ pub async fn sell_swap(
             max_retries: Some(4),
             min_context_slot: None,
         },
-        lookup_tables: None,
     };
 
     match helius.send_smart_transaction(config).await {

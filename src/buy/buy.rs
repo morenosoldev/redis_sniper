@@ -113,19 +113,22 @@ pub async fn buy_swap(
             &user_in_token_account
         )?;
 
-        let intructions = vec![transfer_instruction, sync_instruction];
+        let intructions_set = vec![transfer_instruction, sync_instruction];
         // Create the SmartTransactionConfig
         let config = SmartTransactionConfig {
-            instructions: intructions,
-            signers: vec![&keypair_arc],
+            create_config: CreateSmartTransactionConfig {
+                instructions: intructions_set,
+                signers: vec![&keypair_arc],
+                lookup_tables: None,
+                fee_payer: None,
+            },
             send_options: RpcSendTransactionConfig {
                 skip_preflight: true,
                 preflight_commitment: None,
                 encoding: None,
-                max_retries: Some(2),
+                max_retries: Some(4),
                 min_context_slot: None,
             },
-            lookup_tables: None,
         };
 
         match helius.send_smart_transaction(config).await {
@@ -206,8 +209,12 @@ pub async fn buy_swap(
 
     // Create the SmartTransactionConfig
     let config = SmartTransactionConfig {
-        instructions,
-        signers: vec![&keypair_arc],
+        create_config: CreateSmartTransactionConfig {
+            instructions,
+            signers: vec![&keypair_arc],
+            lookup_tables: None,
+            fee_payer: None,
+        },
         send_options: RpcSendTransactionConfig {
             skip_preflight: true,
             preflight_commitment: None,
@@ -215,7 +222,6 @@ pub async fn buy_swap(
             max_retries: Some(4),
             min_context_slot: None,
         },
-        lookup_tables: None,
     };
 
     match helius.send_smart_transaction(config).await {
