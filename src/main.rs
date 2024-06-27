@@ -48,12 +48,9 @@ async fn handle_trade_message(payload: String) {
                         Ok(result) => {
                             let elapsed = start_time.elapsed();
                             println!("Buy swap successful: {}. Time taken: {:?}", result, elapsed);
-
-                            // Proceed with any further processing if needed
                         }
                         Err(err) => {
                             eprintln!("Buy swap error: {:?}", err);
-                            // Handle the error as per your application's logic
                         }
                     }
                 }
