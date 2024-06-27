@@ -23,7 +23,7 @@ async fn handle_trade_message(payload: String) {
     let trade_info: serde_json::Value = match serde_json::from_str(&payload) {
         Ok(info) => info,
         Err(e) => {
-            eprintln!("Failed to parse trade info: {}", e);
+            eprintln!("Failed to parse trade info, check the other repo: {}", e);
             return;
         }
     };
