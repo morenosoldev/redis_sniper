@@ -17,9 +17,12 @@ use utils::get_or_create_ata_for_token_in_and_out_with_balance;
 use helius::types::*;
 use helius::Helius;
 use service::save_buy_details;
+use service::TokenVaults;
 use solana_sdk::signature::Signature;
 use std::str::FromStr;
 use solana_sdk::pubkey::Pubkey;
+use solana_client::client_error::ClientError;
+use std::time::Duration;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SwapError {
@@ -28,6 +31,7 @@ pub enum SwapError {
     #[error("Invalid transaction data")]
     InvalidTransactionData,
     #[error("Program error: {0}")] ProgramError(#[from] ProgramError),
+    #[error("Client error: {0}")] ClientError(#[from] ClientError),
 }
 
 pub async fn buy_swap(
@@ -58,44 +62,90 @@ pub async fn buy_swap(
     );
     dbg!("Køber nu");
 
-    if
-        key_z.base_mint.to_string() == "So11111111111111111111111111111111111111112".to_string() ||
-        key_z.quote_mint.to_string() != "So11111111111111111111111111111111111111112".to_string()
-    {
-        return Err(SwapError::InvalidTransactionData);
-    }
-
     let keypair_arc = Arc::new(keypair);
+
+    let amount_in: u64 = (sol_amount * 1_000_000_000.0) as u64;
+
+    // Determine if SOL is the input or output token
+    let (token_in_mint, token_out_mint, is_sol_input) = if
+        key_z.base_mint.to_string() == "So11111111111111111111111111111111111111112"
+    {
+        (key_z.base_mint.clone(), key_z.quote_mint.clone(), true)
+    } else if key_z.quote_mint.to_string() == "So11111111111111111111111111111111111111112" {
+        (key_z.quote_mint.clone(), key_z.base_mint.clone(), false)
+    } else {
+        return Err(SwapError::InvalidTransactionData);
+    };
+
+    dbg!("Token in mint: {}", token_in_mint);
 
     let token_in = Token::new(
         program_client.clone(),
         &spl_token::ID,
-        &key_z.quote_mint,
+        &token_in_mint,
         None,
         keypair_arc.clone()
     );
     let token_out = Token::new(
         program_client.clone(),
         &spl_token::ID,
-        &key_z.base_mint,
+        &token_out_mint,
         None,
         keypair_arc.clone()
     );
 
-    let amount_in: u64 = (sol_amount * 1_000_000_000.0) as u64;
-
-    // Get the user's ATA. We don't try to create it as it is expected to exist.
+    // Get the user's ATA or create it if it does not exist
     let user_in_token_account = token_in.get_associated_token_address(&user);
     dbg!("User input-tokens ATA={}", user_in_token_account);
+
+    // Check if the user's token account exists
     let user_in_acct = match token_in.get_account_info(&user_in_token_account).await {
         Ok(account_info) => account_info,
-        Err(err) => {
-            return Err(
-                SwapError::TransactionError(format!("Failed to get user input-tokens ATA: {}", err))
-            );
+        Err(_) => {
+            // Create the user's token account if it does not exist
+            dbg!("Creating user's input-tokens ATA");
+            let create_account_instruction =
+                spl_associated_token_account::create_associated_token_account(
+                    &keypair_arc.pubkey(),
+                    &user,
+                    &token_in_mint
+                );
+
+            let config = SmartTransactionConfig {
+                create_config: CreateSmartTransactionConfig {
+                    instructions: [create_account_instruction].to_vec(),
+                    signers: vec![&keypair_arc],
+                    lookup_tables: None,
+                    fee_payer: None,
+                },
+                send_options: RpcSendTransactionConfig {
+                    skip_preflight: true,
+                    preflight_commitment: None,
+                    encoding: None,
+                    max_retries: Some(4),
+                    min_context_slot: None,
+                },
+            };
+
+            match helius.send_smart_transaction(config).await {
+                Ok(signature) => {
+                    dbg!("Transaction sent successfully: {}", signature);
+                    tokio::time::sleep(Duration::from_secs(15)).await;
+                    // Retry fetching the user's token account info
+                    token_in
+                        .get_account_info(&user_in_token_account).await
+                        .map_err(|err| {
+                            SwapError::TransactionError(
+                                format!("Failed to fetch user's input-tokens ATA after creation: {}", err)
+                            )
+                        })?
+                }
+                Err(e) => {
+                    return Err(SwapError::TransactionError(e.to_string()));
+                }
+            }
         }
     };
-
     // TODO: If input tokens is the native mint(wSOL) and the balance is inadequate, attempt to
     // convert SOL to wSOL.
     let balance = user_in_acct.base.amount;
@@ -207,76 +257,78 @@ pub async fn buy_swap(
     )?;
     instructions.push(swap_instruction);
 
-    // Create the SmartTransactionConfig
-    let config = SmartTransactionConfig {
-        create_config: CreateSmartTransactionConfig {
-            instructions,
-            signers: vec![&keypair_arc],
-            lookup_tables: None,
-            fee_payer: None,
-        },
-        send_options: RpcSendTransactionConfig {
-            skip_preflight: true,
-            preflight_commitment: None,
-            encoding: None,
-            max_retries: Some(4),
-            min_context_slot: None,
-        },
+    let mut token_vaults = TokenVaults {
+        base_vault: "".to_string(),
+        quote_vault: "".to_string(),
+        base_mint: key_z.quote_mint.to_string(),
+        quote_mint: "So11111111111111111111111111111111111111112".to_string(),
     };
 
-    match helius.send_smart_transaction(config).await {
-        Ok(signature) => {
-            dbg!("Transaction sent successfully: {}", signature);
-            let saved_details = save_buy_details(
-                client,
-                &signature,
-                sol_amount,
-                lp_decimals,
-                key_z
-            ).await;
+    if key_z.quote_mint.to_string() == "So11111111111111111111111111111111111111112" {
+        // Swap base_mint and quote_mint if quote_mint is SOL
+        token_vaults = TokenVaults {
+            base_vault: key_z.quote_vault.to_string(),
+            quote_vault: key_z.base_vault.to_string(),
+            base_mint: key_z.base_mint.to_string(),
+            quote_mint: "So11111111111111111111111111111111111111112".to_string(),
+        };
+    }
 
-            if let Err(e) = saved_details {
-                return Err(SwapError::TransactionError(e.to_string()));
-            }
+    let mut retries = 0;
+    let max_retries = 3;
 
-            return Ok(signature.to_string());
-        }
-        Err(e) => {
-            // Log the error for further investigation
-            dbg!("Error sending transaction: {:?}", &e);
+    loop {
+        // Create the SmartTransactionConfig
+        let config = SmartTransactionConfig {
+            create_config: CreateSmartTransactionConfig {
+                instructions: instructions.clone(),
+                signers: vec![&keypair_arc],
+                lookup_tables: None,
+                fee_payer: None,
+            },
+            send_options: RpcSendTransactionConfig {
+                skip_preflight: true,
+                preflight_commitment: None,
+                encoding: None,
+                max_retries: Some(4),
+                min_context_slot: None,
+            },
+        };
 
-            // Check if the error is a timeout (code 408)
-            if e.to_string().contains("408 Request Timeout") {
-                // Attempt to extract the signature from the error
-                if let Some(signature) = extract_signature_from_error(&e) {
-                    dbg!("Extracted signature: {}", &signature);
-                    let sig = Signature::from_str(&signature).map_err(|err|
-                        SwapError::TransactionError(err.to_string())
-                    )?;
+        match helius.send_smart_transaction(config).await {
+            Ok(signature) => {
+                dbg!("Transaction sent successfully: {}", signature);
+                let saved_details = save_buy_details(
+                    client,
+                    &signature,
+                    sol_amount,
+                    lp_decimals,
+                    &token_out_mint.to_string(),
+                    token_vaults,
+                    false
+                ).await;
 
-                    let saved_details = save_buy_details(
-                        client,
-                        &sig,
-                        sol_amount,
-                        lp_decimals,
-                        key_z
-                    ).await;
-
-                    if let Err(save_err) = saved_details {
-                        return Err(SwapError::TransactionError(save_err.to_string()));
-                    }
-
-                    Ok(signature)
-                } else {
-                    Err(
-                        SwapError::TransactionError(
-                            "Failed to extract signature from error".to_string()
-                        )
-                    )
+                if let Err(e) = saved_details {
+                    return Err(SwapError::TransactionError(e.to_string()));
                 }
-            } else {
-                // Handle other types of errors
-                Err(SwapError::TransactionError(e.to_string()))
+
+                return Ok(signature.to_string());
+            }
+            Err(e) => {
+                // Log the error for further investigation
+                dbg!("Error sending transaction: {:?}", &e);
+
+                // Check if the error is a timeout (code 408) or other retryable error
+                if e.to_string().contains("408 Request Timeout") || retries < max_retries {
+                    retries += 1;
+                    dbg!("Retrying transaction attempt {}/{}", retries, max_retries);
+                    // Sleep for a bit before retrying
+                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                    continue;
+                } else {
+                    // Handle other types of errors
+                    return Err(SwapError::TransactionError(e.to_string()));
+                }
             }
         }
     }

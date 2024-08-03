@@ -1,6 +1,6 @@
-use super::raydium_sdk;
 use super::utils;
 use super::price;
+use super::price::calculate_pump_price;
 use super::mongo;
 use price::get_current_sol_price;
 use mongo::{ TokenInfo, BuyTransaction, MongoHandler, TransactionType };
@@ -15,14 +15,24 @@ use std::error::Error;
 use std::sync::Arc;
 use std::time::Duration;
 
+#[derive(Debug, Clone)]
+pub struct TokenVaults {
+    pub base_vault: String,
+    pub quote_vault: String,
+    pub base_mint: String,
+    pub quote_mint: String,
+}
+
 pub async fn save_buy_details(
     client: Arc<RpcClient>,
     signature: &Signature,
     sol_amount: f64,
     lp_decimals: u8,
-    key_z: raydium_sdk::LiquidityPoolKeys
+    mint: &str,
+    token_vaults: TokenVaults,
+    pump: bool
 ) -> Result<(), Box<dyn Error>> {
-    let max_retries = 2;
+    let max_retries = 3;
     let retry_delay = Duration::from_secs(10);
     let mut retries = 0;
 
@@ -40,7 +50,10 @@ pub async fn save_buy_details(
                         })
                         .unwrap_or_else(|| Vec::new());
 
-                let amount: Option<String> = get_second_instruction_amount(&inner_instructions);
+                let amount: Option<String> = get_second_instruction_amount(
+                    &inner_instructions,
+                    pump
+                );
 
                 if let Some(ref amount_str) = amount {
                     // Parse the amount as f64
@@ -52,27 +65,58 @@ pub async fn save_buy_details(
                     // Adjust the token amount using the decimals
                     let adjusted_token_amount = amount / (10f64).powf(token_decimals);
 
-                    // Calculate the buy price per token in SOL
-                    let buy_price_per_token_in_sol = sol_amount / adjusted_token_amount;
+                    let (buy_price_per_token_in_sol, current_sol_price, buy_price_usd) = if pump {
+                        // Use calculate_pump_price if the token_mint ends with "pump"
+                        match calculate_pump_price(&client.clone(), mint.parse()?).await {
+                            Ok(price) => {
+                                let price_per_token_in_sol = price; // Adjust as necessary
+                                let current_sol_price =
+                                    get_current_sol_price().await.unwrap_or_default();
+                                let buy_price_usd = price_per_token_in_sol * current_sol_price;
+                                (price_per_token_in_sol, current_sol_price, buy_price_usd)
+                            }
+                            Err(e) => {
+                                eprintln!("Error calculating pump price: {}", e);
+                                return Err(e.into()); // Skip this token on error
+                            }
+                        }
+                    } else {
+                        // Calculate the buy price per token in SOL
+                        let buy_price_per_token_in_sol = sol_amount / adjusted_token_amount;
+                        let current_sol_price = get_current_sol_price().await.unwrap_or_default();
+                        let usd_amount = sol_amount * current_sol_price;
 
-                    // Fetch the current SOL price in USD
-                    let current_sol_price = get_current_sol_price().await.unwrap_or_default();
-
-                    let usd_amount = sol_amount * current_sol_price;
+                        (buy_price_per_token_in_sol, current_sol_price, usd_amount)
+                    };
 
                     let fee = confirmed_transaction.transaction.meta.unwrap().fee;
 
                     let fee_sol = (fee as f64) / 1_000_000_000.0;
                     let fee_usd = fee_sol * current_sol_price;
 
-                    // Calculate the buy price in USD
-                    let buy_price_usd = buy_price_per_token_in_sol * current_sol_price;
+                    // Determine the vaults to use
+                    let (base_vault, quote_vault) = if pump {
+                        ("".to_string(), "".to_string())
+                    } else {
+                        (token_vaults.base_vault.to_string(), token_vaults.quote_vault.to_string())
+                    };
+
+                    // Determine the base mint and base vault based on whether base_mint is SOL
+                    let base_mint_to_use = if
+                        token_vaults.base_mint == "So11111111111111111111111111111111111111112"
+                    {
+                        // If base_mint is SOL, use quote_mint and quote_vault instead
+                        token_vaults.quote_mint.to_string()
+                    } else {
+                        // Otherwise, use base_mint and base_vault
+                        token_vaults.base_mint.to_string()
+                    };
 
                     let token_info = TokenInfo {
-                        base_mint: key_z.base_mint.to_string(),
-                        quote_mint: key_z.quote_mint.to_string(),
-                        base_vault: key_z.base_vault.to_string(),
-                        quote_vault: key_z.quote_vault.to_string(),
+                        base_mint: base_mint_to_use,
+                        quote_mint: token_vaults.quote_mint.to_string(),
+                        base_vault,
+                        quote_vault,
                     };
 
                     // Initialize MongoDB handler
@@ -83,28 +127,37 @@ pub async fn save_buy_details(
                         }
                     };
 
-                    let token_metadata = match
-                        get_token_metadata(
-                            &key_z.base_mint.to_string(),
-                            adjusted_token_amount,
-                            &client
-                        ).await
-                    {
-                        Ok(metadata) => metadata,
-                        Err(err) => {
-                            return Err(err.into());
+                    // Prepare token_metadata and ensure it's not None
+                    let token_metadata = loop {
+                        match get_token_metadata(&mint, adjusted_token_amount, &client).await {
+                            Ok(metadata) => {
+                                break metadata;
+                            }
+                            Err(err) => {
+                                eprintln!("Error fetching token metadata: {:?}", err);
+                                // You might want to retry or provide a default value here
+                                tokio::time::sleep(retry_delay).await;
+                                retries += 1;
+                                if retries > max_retries {
+                                    return Err(err.into());
+                                }
+                            }
                         }
                     };
+
+                    let usd_amount = sol_amount * current_sol_price;
 
                     let buy_transaction: BuyTransaction = BuyTransaction {
                         transaction_signature: signature.to_string().clone(),
                         token_info: token_info.clone(),
+                        initial_amount: amount,
                         amount,
                         sol_amount,
                         sol_price: current_sol_price,
+                        highest_profit_percentage: 0.0,
                         usd_amount,
                         token_metadata: token_metadata.clone(),
-                        entry_price: buy_price_usd,
+                        entry_price: buy_price_per_token_in_sol,
                         fee_sol,
                         fee_usd,
                         transaction_type: TransactionType::LongTermHold,
@@ -126,7 +179,8 @@ pub async fn save_buy_details(
                         let Err(e) = mongo_handler.store_token(
                             token_metadata,
                             "solsniper",
-                            "tokens"
+                            "tokens",
+                            sol_amount
                         ).await
                     {
                         eprintln!("Error storing token info: {:?}", e);

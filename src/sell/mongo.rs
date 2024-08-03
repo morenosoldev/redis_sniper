@@ -3,6 +3,7 @@ use mongodb::error::Error as MongoError;
 use serde::Serialize;
 use serde::Deserialize;
 use mongodb::bson::DateTime;
+use mongodb::error::ErrorKind;
 
 pub struct MongoHandler {
     client: Client,
@@ -52,11 +53,28 @@ pub struct SellTransaction {
     pub fee_sol: f64,
     pub fee_usd: f64,
     pub entry_price: f64,
-    pub token_metadata: TokenMetadata,
+    pub token_metadata: Option<TokenMetadata>,
     pub profit: f64,
     pub profit_usd: f64,
     pub profit_percentage: f64,
     pub created_at: DateTime,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct TradeState {
+    pub token_mint: String,
+    pub entry_price: f64,
+    pub initial_investment_taken: bool,
+    pub ath_50_percent_triggered: bool,
+    pub profit_taking_count: i32,
+    pub last_profit_taking_time: Option<DateTime>,
+    pub last_profit_percentage: f64,
+    pub stop_loss_triggered: bool,
+    pub initial_investment: f64,
+    pub stop_loss_at_breakeven: bool,
+    pub taken_out: f64,
+    pub remaining: f64,
+    pub token_metadata: Option<TokenMetadata>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)] // Add `Clone` to derive
@@ -81,6 +99,102 @@ impl MongoHandler {
         Ok(Self { client })
     }
 
+    pub async fn update_buy_transaction(
+        &self,
+        buy_transaction: &BuyTransaction
+    ) -> Result<(), MongoError> {
+        let db = self.client.database("solsniper");
+        let collection: Collection<Document> = db.collection("buy_transactions"); // Replace with your collection name
+
+        let filter =
+            doc! {
+            "transaction_signature": &buy_transaction.transaction_signature
+        };
+
+        let update =
+            doc! {
+            "$set": {
+                "amount": buy_transaction.amount,
+                "sol_amount": buy_transaction.sol_amount,
+                "sol_price": buy_transaction.sol_price,
+                "usd_amount": buy_transaction.usd_amount,
+                "entry_price": buy_transaction.entry_price,
+                "fee_sol": buy_transaction.fee_sol,
+                "fee_usd": buy_transaction.fee_usd,
+                "created_at": buy_transaction.created_at,
+                "transaction_type": bson::to_bson(&buy_transaction.transaction_type)?
+            }
+        };
+
+        // Check if amount or sol_amount is 0 or 0.0
+        if buy_transaction.amount == 0.0 {
+            self.update_token_metadata_sold_field(
+                "solsniper",
+                "tokens",
+                &buy_transaction.token_info.base_mint
+            ).await?;
+        }
+
+        collection.update_one(filter, update, None).await?;
+
+        Ok(())
+    }
+
+    pub async fn get_buy_transaction_from_token(
+        &self,
+        token_mint: &str,
+        db_name: &str,
+        collection_name: &str
+    ) -> Result<BuyTransaction, MongoError> {
+        let db = self.client.database(db_name);
+        let collection: Collection<Document> = db.collection(collection_name);
+
+        let filter = doc! {
+            "token_info.base_mint": token_mint
+        };
+
+        let document = match collection.find_one(filter, None).await {
+            Ok(doc) => doc,
+            Err(e) => {
+                eprintln!("Error querying MongoDB: {}", e);
+                return Err(e);
+            }
+        };
+
+        match document {
+            Some(doc) => {
+                match bson::from_document(doc) {
+                    Ok(buy_transaction) => Ok(buy_transaction),
+                    Err(e) => {
+                        eprintln!("Error deserializing BuyTransaction: {}", e);
+                        Err(MongoError::from(e)) // You might want to adjust this to match your error type
+                    }
+                }
+            }
+            None => {
+                eprintln!("No document found for token mint: {}", token_mint);
+                Ok(BuyTransaction {
+                    transaction_signature: "".to_string(),
+                    token_info: TokenInfo {
+                        base_mint: "".to_string(),
+                        quote_mint: "".to_string(),
+                        base_vault: "".to_string(),
+                        quote_vault: "".to_string(),
+                    },
+                    amount: 0.0,
+                    sol_amount: 0.0,
+                    sol_price: 0.0,
+                    entry_price: 0.0,
+                    usd_amount: 0.0,
+                    fee_sol: 0.0,
+                    fee_usd: 0.0,
+                    created_at: DateTime::now(),
+                    transaction_type: TransactionType::LongTermHold,
+                })
+            }
+        }
+    }
+
     pub async fn update_token_metadata_sold_field(
         &self,
         mint: &str,
@@ -103,6 +217,78 @@ impl MongoHandler {
         };
 
         // Update the document matching the filter
+        collection.update_one(filter, update, None).await?;
+
+        Ok(())
+    }
+
+    pub async fn fetch_trade_state(&self, token_mint: &str) -> Result<TradeState, MongoError> {
+        let db = self.client.database("trading"); // Replace with your database name
+        let collection: Collection<Document> = db.collection("trade_states"); // Replace with your collection name
+
+        let filter = doc! {
+            "token_mint": token_mint
+        };
+
+        let document = collection.find_one(filter, None).await?;
+
+        match document {
+            Some(doc) => {
+                match bson::from_document::<TradeState>(doc) {
+                    Ok(trade_state) => Ok(trade_state),
+                    Err(e) => {
+                        eprintln!("Error deserializing TradeState: {}", e);
+                        Err(MongoError::from(e))
+                    }
+                }
+            }
+            None => {
+                // If no document is found, return a default TradeState
+                // You might want to return an error or handle it differently
+                Ok(TradeState {
+                    token_mint: token_mint.to_string(),
+                    entry_price: 0.0,
+                    ath_50_percent_triggered: false,
+                    initial_investment_taken: false,
+                    profit_taking_count: 0,
+                    last_profit_taking_time: None,
+                    last_profit_percentage: 0.0,
+                    stop_loss_triggered: false,
+                    initial_investment: 0.0,
+                    stop_loss_at_breakeven: false,
+                    token_metadata: None,
+                    taken_out: 0.0,
+                    remaining: 0.0,
+                })
+            }
+        }
+    }
+
+    pub async fn update_trade_state(&self, trade_state: &TradeState) -> Result<(), MongoError> {
+        let db = self.client.database("trading"); // Replace with your database name
+        let collection: Collection<Document> = db.collection("trade_states"); // Replace with your collection name
+
+        let filter = doc! {
+            "token_mint": &trade_state.token_mint
+        };
+
+        let update =
+            doc! {
+            "$set": {
+                "entry_price": trade_state.entry_price,
+                "initial_investment_taken": trade_state.initial_investment_taken,
+                "ath_50_percent_triggered": trade_state.ath_50_percent_triggered,
+                "profit_taking_count": trade_state.profit_taking_count,
+                "last_profit_taking_time": trade_state.last_profit_taking_time,
+                "last_profit_percentage": trade_state.last_profit_percentage,
+                "stop_loss_triggered": trade_state.stop_loss_triggered,
+                "initial_investment": trade_state.initial_investment,
+                "taken_out": trade_state.taken_out,
+                "remaining": trade_state.remaining,
+
+            }
+        };
+
         collection.update_one(filter, update, None).await?;
 
         Ok(())

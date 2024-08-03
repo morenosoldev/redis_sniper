@@ -15,7 +15,8 @@ use solana_sdk::signature::Signature;
 
 pub async fn confirm_sell(
     signature: &Signature,
-    sell_transaction: &SellTransaction
+    sell_transaction: &SellTransaction,
+    sol_received: Option<f64>
 ) -> Result<(), Box<dyn Error>> {
     let rpc_endpoint = std::env
         ::var("RPC_URL")
@@ -36,7 +37,13 @@ pub async fn confirm_sell(
         match rpc_client.get_transaction(&signature, UiTransactionEncoding::JsonParsed) {
             Ok(confirmed_transaction) => {
                 let sell_price = sell_transaction.current_token_price_usd;
-                let sol_amount = calculate_sol_amount_received(&confirmed_transaction).await?;
+                let sol_amount = match sol_received {
+                    Some(amount) => amount,
+                    None => {
+                        // Calculate sol_amount if sol_received is not provided
+                        calculate_sol_amount_received(&confirmed_transaction).await? as f64
+                    }
+                };
                 let profit = (sol_amount as f64) - (sell_transaction.sol_amount as f64);
                 let profit_usd = profit * usd_sol_price;
                 let profit_percentage = (profit / (sell_transaction.sol_amount as f64)) * 100.0;
@@ -52,6 +59,30 @@ pub async fn confirm_sell(
                 let profit_percentage_value: f64 = profit_percentage_str
                     .parse()
                     .unwrap_or_default();
+
+                let mut trade_state = mongo_handler.fetch_trade_state(
+                    &sell_transaction.mint.clone()
+                ).await?;
+
+                let mut buy_transaction = mongo_handler.get_buy_transaction_from_token(
+                    &sell_transaction.mint.clone(),
+                    "solsniper",
+                    "buy_transactions"
+                ).await?;
+
+                buy_transaction.amount = buy_transaction.amount - (sell_transaction.amount as f64);
+                mongo_handler.update_buy_transaction(&buy_transaction).await?;
+                mongo_handler.update_token_metadata_sold_field(
+                    &sell_transaction.mint,
+                    "solsniper",
+                    "tokens"
+                ).await?;
+
+                println!("Sol amount: {}", sol_amount);
+                trade_state.taken_out += sol_amount;
+                trade_state.remaining -= 0.0;
+
+                mongo_handler.update_trade_state(&trade_state).await?;
 
                 let sell_transaction_mongo = SellTransactionMongo {
                     transaction_signature: signature.to_string(),
@@ -79,12 +110,6 @@ pub async fn confirm_sell(
                     sell_transaction_mongo,
                     "solsniper",
                     "sell_transactions"
-                ).await?;
-
-                mongo_handler.update_token_metadata_sold_field(
-                    &sell_transaction.mint,
-                    "solsniper",
-                    "tokens"
                 ).await?;
 
                 confirmed = true;

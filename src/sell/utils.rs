@@ -71,38 +71,93 @@ pub struct LiquidityPoolKeysV4 {
     pub lookup_table_account: Pubkey,
 }
 
-async fn get_program_account(
+pub async fn get_program_account(
     client: Arc<RpcClient>,
     mint: &Pubkey
-) -> Result<Option<(Pubkey, solana_sdk::account::Account)>, Box<dyn std::error::Error>> {
+) -> Result<Option<(Pubkey, solana_sdk::account::Account)>, Box<dyn Error>> {
     const INPUT_MINT_OFFSET: usize = 400;
-    //const OUTPUT_MINT_OFFSET: usize = 432;
+    const OUTPUT_MINT_OFFSET: usize = 432;
+    const PROGRAM_ID: &str = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8";
 
-    let filters = Some(
-        vec![
-            RpcFilterType::Memcmp(
-                Memcmp::new(INPUT_MINT_OFFSET, MemcmpEncodedBytes::Base58(mint.to_string()))
-            ),
-            RpcFilterType::DataSize(752)
-        ]
-    );
+    dbg!(&mint);
 
-    let accounts = client.get_program_accounts_with_config(
-        &Pubkey::from_str("675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8").unwrap(),
-        RpcProgramAccountsConfig {
-            filters,
-            account_config: RpcAccountInfoConfig {
-                encoding: Some(UiAccountEncoding::Base64),
+    // Define the common filters
+    let common_filters = vec![RpcFilterType::DataSize(752)];
+
+    // Define the filters for "sol-token"
+    let sol_token_filters = common_filters
+        .iter()
+        .chain(
+            vec![
+                RpcFilterType::Memcmp(
+                    Memcmp::new(OUTPUT_MINT_OFFSET, MemcmpEncodedBytes::Base58(mint.to_string()))
+                ),
+                RpcFilterType::Memcmp(
+                    Memcmp::new(
+                        INPUT_MINT_OFFSET,
+                        MemcmpEncodedBytes::Base58(
+                            "So11111111111111111111111111111111111111112".to_string()
+                        )
+                    )
+                )
+            ].iter()
+        )
+        .cloned()
+        .collect::<Vec<_>>();
+
+    // Define the filters for "token-sol"
+    let token_sol_filters = common_filters
+        .iter()
+        .chain(
+            vec![
+                RpcFilterType::Memcmp(
+                    Memcmp::new(INPUT_MINT_OFFSET, MemcmpEncodedBytes::Base58(mint.to_string()))
+                ),
+                RpcFilterType::Memcmp(
+                    Memcmp::new(
+                        OUTPUT_MINT_OFFSET,
+                        MemcmpEncodedBytes::Base58(
+                            "So11111111111111111111111111111111111111112".to_string()
+                        )
+                    )
+                )
+            ].iter()
+        )
+        .cloned()
+        .collect::<Vec<_>>();
+
+    // Function to fetch accounts based on filters
+    async fn fetch_accounts(
+        client: Arc<RpcClient>,
+        filters: Vec<RpcFilterType>
+    ) -> Result<Option<(Pubkey, solana_sdk::account::Account)>, Box<dyn Error>> {
+        let accounts = client.get_program_accounts_with_config(
+            &Pubkey::from_str(PROGRAM_ID)?,
+            RpcProgramAccountsConfig {
+                filters: Some(filters),
+                account_config: RpcAccountInfoConfig {
+                    encoding: Some(UiAccountEncoding::Base64),
+                    ..Default::default()
+                },
                 ..Default::default()
-            },
-            ..Default::default()
-        }
-    ).await;
+            }
+        ).await;
 
-    match accounts {
-        Ok(accounts) => Ok(accounts.into_iter().next()),
-        Err(e) => { Err(Box::new(e)) }
+        println!("{:?}", accounts);
+
+        match accounts {
+            Ok(accounts) => Ok(accounts.into_iter().next()),
+            Err(e) => Err(Box::new(e)),
+        }
     }
+
+    // Try fetching accounts with " token_sol_filters" filters first
+    if let Some(account) = fetch_accounts(client.clone(), token_sol_filters).await? {
+        return Ok(Some(account));
+    }
+
+    // If no account found, try fetching with "token-sol" filters
+    fetch_accounts(client, sol_token_filters).await
 }
 
 async fn get_minimal_market_v3(client: &RpcClient, market_id: Pubkey) -> MinimalMarketLayoutV3 {

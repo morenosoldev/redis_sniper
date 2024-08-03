@@ -263,15 +263,32 @@ impl Helius {
         updated_instructions.push(compute_budget_ix.clone());
         final_instructions.push(compute_budget_ix);
 
-        // Get the optimal compute units
-        let units: Option<u64> = self.get_compute_units(
-            updated_instructions,
-            payer_pubkey,
-            config.lookup_tables.clone().unwrap_or_default(),
-            &config.signers
-        ).await?;
+        // Retry loop for compute units
+        const MAX_RETRIES: u8 = 3;
+        const RETRY_DELAY_MS: u64 = 2000; // 2 seconds
 
-        if units.is_none() {
+        let mut retries = 0;
+        let mut units: Option<u64> = None;
+
+        while retries < MAX_RETRIES {
+            units = self.get_compute_units(
+                updated_instructions.clone(),
+                payer_pubkey,
+                config.lookup_tables.clone().unwrap_or_default(),
+                &config.signers
+            ).await?;
+
+            if units.is_some() && units.unwrap() > 0 {
+                break;
+            }
+
+            retries += 1;
+            if retries < MAX_RETRIES {
+                tokio::time::sleep(Duration::from_millis(RETRY_DELAY_MS)).await;
+            }
+        }
+
+        if units.is_none() || units.unwrap() == 0 {
             return Err(
                 HeliusError::InvalidInput(
                     "Error fetching compute units for the instructions provided".to_string()
@@ -280,7 +297,7 @@ impl Helius {
         }
 
         let compute_units: u64 = units.unwrap();
-        println!("{}", compute_units);
+        println!("test cu {}", compute_units);
         let customers_cu: u32 = if compute_units < 1000 {
             1000
         } else {
@@ -378,8 +395,8 @@ impl Helius {
             self.connection().send_transaction_with_config(transaction, send_transaction_config)
         };
 
-        // Retry logic with a timeout of 60 seconds
-        let timeout: Duration = Duration::from_secs(60);
+        // Retry logic with a timeout of 35 seconds
+        let timeout: Duration = Duration::from_secs(35);
         let start_time: Instant = Instant::now();
 
         while
@@ -413,7 +430,7 @@ impl Helius {
 
         Err(HeliusError::Timeout {
             code: StatusCode::REQUEST_TIMEOUT,
-            text: "Transaction failed to confirm in 60s".to_string(),
+            text: "Transaction failed to confirm in 35s".to_string(),
         })
     }
 }

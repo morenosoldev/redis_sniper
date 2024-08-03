@@ -17,14 +17,13 @@ use solana_client::rpc_config::RpcSendTransactionConfig;
 use serde::{ Serialize, Deserialize };
 use solana_sdk::pubkey::Pubkey;
 use std::str::FromStr;
-use std::time::Duration;
 use solana_transaction_status::UiTransactionEncoding;
 use helius::types::*;
 use helius::Helius;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SellTransaction {
-    pub metadata: TokenMetadata,
+    pub metadata: Option<TokenMetadata>,
     pub mint: String,
     pub current_token_price_usd: f64,
     pub current_token_price_sol: f64,
@@ -48,7 +47,6 @@ pub async fn sell_swap(
         .expect("You must set the PRIVATE_KEY environment variable!");
     let keypair = Keypair::from_base58_string(&private_key);
 
-    let min_amount_out = 0;
     let rpc_endpoint = std::env
         ::var("RPC_URL")
         .expect("You must set the RPC_URL environment variable!");
@@ -150,151 +148,102 @@ pub async fn sell_swap(
 
     let swap_amount_in = sell_transaction.amount;
 
-    if pool_info.base_mint == Pubkey::from_str(&sell_transaction.mint).unwrap() {
-        dbg!("Initializing swap with input tokens as pool base token");
-        debug_assert!(pool_info.quote_mint == out_token);
-        let swap_instruction = amm::swap_base_in(
-            &amm::ID,
-            &pool_info.id,
-            &pool_info.authority,
-            &pool_info.open_orders,
-            &pool_info.target_orders,
-            &pool_info.base_vault,
-            &pool_info.quote_vault,
-            &pool_info.market_program_id,
-            &pool_info.market_id,
-            &pool_info.market_bids,
-            &pool_info.market_asks,
-            &pool_info.market_event_queue,
-            &pool_info.market_base_vault,
-            &pool_info.market_quote_vault,
-            &pool_info.market_authority,
-            &user_in_token_account,
-            &user_out_token_account,
-            &user,
-            swap_amount_in,
-            min_amount_out
-        )?;
+    println!("Swap amount in: {}", swap_amount_in);
+    let min_amount_out = 0;
 
-        instructions.push(swap_instruction);
-    } else {
-        dbg!("Initializing swap with input tokens as pool quote token");
-        debug_assert!(
-            pool_info.quote_mint == Pubkey::from_str(&sell_transaction.mint).unwrap() &&
-                pool_info.base_mint == out_token
-        );
-        let swap_instruction = amm::swap_base_out(
-            &amm::ID,
-            &pool_info.id,
-            &pool_info.authority,
-            &pool_info.open_orders,
-            &pool_info.target_orders,
-            &pool_info.base_vault,
-            &pool_info.quote_vault,
-            &pool_info.market_program_id,
-            &pool_info.market_id,
-            &pool_info.market_bids,
-            &pool_info.market_asks,
-            &pool_info.market_event_queue,
-            &pool_info.market_base_vault,
-            &pool_info.market_quote_vault,
-            &pool_info.market_authority,
-            &user_in_token_account,
-            &user_out_token_account,
-            &user,
-            swap_amount_in,
-            min_amount_out
-        )?;
-        instructions.push(swap_instruction);
-    }
+    dbg!("Initializing swap with input tokens as pool base token");
+    let swap_instruction = amm::swap_base_in(
+        &amm::ID,
+        &pool_info.id,
+        &pool_info.authority,
+        &pool_info.open_orders,
+        &pool_info.target_orders,
+        &pool_info.base_vault,
+        &pool_info.quote_vault,
+        &pool_info.market_program_id,
+        &pool_info.market_id,
+        &pool_info.market_bids,
+        &pool_info.market_asks,
+        &pool_info.market_event_queue,
+        &pool_info.market_base_vault,
+        &pool_info.market_quote_vault,
+        &pool_info.market_authority,
+        &user_in_token_account,
+        &user_out_token_account,
+        &user,
+        swap_amount_in,
+        min_amount_out
+    )?;
+    instructions.push(swap_instruction);
 
-    let max_retries = 12;
-    let retry_delay = Duration::from_secs(5);
+    let mut retry_count = 0;
+    let max_retries = 4;
+    let retry_delay = tokio::time::Duration::from_secs(5);
 
-    // Create the SmartTransactionConfig
-    let config: SmartTransactionConfig = SmartTransactionConfig {
-        create_config: CreateSmartTransactionConfig {
-            instructions,
-            signers: vec![&keypair_arc],
-            lookup_tables: None,
-            fee_payer: None,
-        },
-        send_options: RpcSendTransactionConfig {
-            skip_preflight: true,
-            preflight_commitment: None,
-            encoding: None,
-            max_retries: Some(4),
-            min_context_slot: None,
-        },
-    };
+    loop {
+        // Create the SmartTransactionConfig
+        let config: SmartTransactionConfig = SmartTransactionConfig {
+            create_config: CreateSmartTransactionConfig {
+                instructions: instructions.clone(),
+                signers: vec![&keypair_arc],
+                lookup_tables: None,
+                fee_payer: None,
+            },
+            send_options: RpcSendTransactionConfig {
+                skip_preflight: true,
+                preflight_commitment: None,
+                encoding: None,
+                max_retries: Some(4),
+                min_context_slot: None,
+            },
+        };
 
-    match helius.send_smart_transaction(config).await {
-        Ok(signature) => {
-            dbg!("Transaction sent successfully: {}", signature);
-            let mut retry_count = 0;
-            let mut confirmed = false;
+        match helius.send_smart_transaction(config).await {
+            Ok(signature) => {
+                dbg!("Transaction sent successfully: {}", signature);
+                let mut confirmed = false;
 
-            while !confirmed && retry_count <= max_retries {
-                match client.get_transaction(&signature, UiTransactionEncoding::JsonParsed).await {
-                    Ok(_confirmed_transaction) => {
-                        confirm_sell(&signature, sell_transaction).await?;
-                        confirmed = true;
-                    }
-                    Err(err) => {
-                        eprintln!("Error getting confirmed transaction: {:?}", err);
-                        if
-                            err.to_string().contains("not confirmed") ||
-                            err.to_string().contains("invalid type: null")
-                        {
-                            retry_count += 1;
-                            tokio::time::sleep(retry_delay).await;
-                        } else {
-                            break;
+                while !confirmed && retry_count <= max_retries {
+                    match
+                        client.get_transaction(&signature, UiTransactionEncoding::JsonParsed).await
+                    {
+                        Ok(_confirmed_transaction) => {
+                            confirm_sell(&signature, sell_transaction, None).await?;
+                            confirmed = true;
+                        }
+                        Err(err) => {
+                            eprintln!("Error getting confirmed transaction: {:?}", err);
+                            if
+                                err.to_string().contains("not confirmed") ||
+                                err.to_string().contains("invalid type: null")
+                            {
+                                retry_count += 1;
+                                tokio::time::sleep(retry_delay).await;
+                            } else {
+                                break;
+                            }
                         }
                     }
                 }
+
+                return Ok(signature);
             }
-
-            return Ok(signature);
-        }
-        Err(e) => {
-            // Check if the error is a timeout (code 408)
-            if e.to_string().contains("408 Request Timeout") {
-                // Attempt to save transaction details even if there was a timeout
-                if let Some(signature) = extract_signature_from_error(&e) {
-                    dbg!("Extracted signature: {}", &signature);
-                    let sig = Signature::from_str(&signature)
-                        .map_err(|err| {
-                            return Box::new(err) as Box<dyn std::error::Error>;
-                        })
-                        .unwrap();
-
-                    confirm_sell(&sig, sell_transaction).await?;
-                    return Ok(sig);
-                } else {
-                    return Err(e.into());
+            Err(e) => {
+                eprintln!("Error sending smart transaction: {:?}", e);
+                // Check if the error is a timeout (code 408) or other transient errors
+                if
+                    e.to_string().contains("408 Request Timeout") ||
+                    e.to_string().contains("some other transient error")
+                {
+                    retry_count += 1;
+                    if retry_count <= max_retries {
+                        eprintln!("Retrying transaction... Attempt {}", retry_count);
+                        tokio::time::sleep(retry_delay).await;
+                        continue;
+                    }
                 }
-            } else {
                 return Err(e.into());
             }
         }
     }
-}
-
-fn extract_signature_from_error(error: &HeliusError) -> Option<String> {
-    let error_message = error.to_string();
-    let start_marker =
-        "Transaction confirmation timed out with error code 408 Request Timeout: Transaction ";
-    let end_marker = "'s confirmation timed out";
-
-    // Find the start and end positions
-    let start = error_message.find(start_marker)?;
-    let end = error_message.find(end_marker)?;
-
-    // Calculate the start of the actual signature (after the start marker)
-    let start_signature = start + start_marker.len();
-
-    // Extract the substring containing the signature
-    let signature = &error_message[start_signature..end];
-    Some(signature.to_string())
 }

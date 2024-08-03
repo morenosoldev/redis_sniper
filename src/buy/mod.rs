@@ -4,3 +4,4 @@ pub mod utils;
 pub mod price;
 pub mod mongo;
 pub mod service;
+pub mod pump;

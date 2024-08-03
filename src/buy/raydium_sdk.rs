@@ -3,7 +3,7 @@ use solana_sdk::pubkey::Pubkey;
 use std::str::FromStr;
 use serde::{ Serialize, Deserialize };
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct LiquidityPoolKeysString {
     id: String,
     base_mint: String,
