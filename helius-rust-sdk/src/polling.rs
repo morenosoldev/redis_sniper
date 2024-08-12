@@ -18,7 +18,7 @@ pub async fn poll_transaction(
     let mut checked_sent = false;
 
     loop {
-        match timeout(Duration::from_secs(35), stream.next()).await {
+        match timeout(Duration::from_secs(50), stream.next()).await {
             Ok(Some(response)) => {
                 let value: RpcSignatureResult = response.value;
 
@@ -56,7 +56,7 @@ pub async fn poll_transaction(
                     }
                 } else {
                     // If already checked, wait for a maximum of 1 minute
-                    if let Err(_) = timeout(Duration::from_secs(45), stream.next()).await {
+                    if let Err(_) = timeout(Duration::from_secs(10), stream.next()).await {
                         println!("No transaction updates received within 1 minute after sending.");
                         return Ok(false);
                     }
