@@ -77,7 +77,6 @@ pub async fn save_buy_details(
                                 (price_per_token_in_sol, current_sol_price, buy_price_usd)
                             }
                             Err(e) => {
-                                eprintln!("Error calculating pump price: {}", e);
                                 return Err(e.into()); // Skip this token on error
                             }
                         }
@@ -135,7 +134,6 @@ pub async fn save_buy_details(
                                 break metadata;
                             }
                             Err(err) => {
-                                eprintln!("Error fetching token metadata: {:?}", err);
                                 // You might want to retry or provide a default value here
                                 tokio::time::sleep(retry_delay).await;
                                 retries += 1;

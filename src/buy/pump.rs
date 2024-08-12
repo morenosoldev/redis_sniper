@@ -101,11 +101,9 @@ pub async fn pump_fun_buy(
     }
 
     for _ in 0..MAX_RETRIES {
-        println!("Prøver igen");
         let coin_data = match get_coin_data(mint_str).await {
             Ok(data) => data,
             Err(_) => {
-                eprintln!("Failed to retrieve coin data...");
                 return Err("Failed to retrieve coin data...".into());
             }
         };
@@ -152,8 +150,6 @@ pub async fn pump_fun_buy(
 
         match create_transaction(instructions.clone(), payer.insecure_clone()).await {
             Ok(tx) => {
-                println!("Transaction sent successfully: {}", tx);
-
                 let key_z = TokenVaults {
                     base_vault: "".to_string(),
                     quote_vault: "".to_string(),
@@ -173,7 +169,6 @@ pub async fn pump_fun_buy(
             }
             Err(e) => {
                 dbg!("Failed to send transaction: {:?}", e);
-                eprintln!("Failed to create transaction, retrying...");
                 instructions.clear(); // Clear instructions to recalculate in the next iteration
             }
         }

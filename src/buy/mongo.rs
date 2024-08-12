@@ -133,6 +133,7 @@ impl MongoHandler {
             let document =
                 doc! {
                 "sold": false,
+                "created_at": DateTime::now(),
                 "token_metadata": {
                     "name": &token_metadata.name,
                     "symbol": &token_metadata.symbol,

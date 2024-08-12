@@ -75,6 +75,7 @@ pub async fn buy_swap(
     } else {
         return Err(SwapError::InvalidTransactionData);
     };
+
     dbg!("Token in mint: {}", token_in_mint);
     dbg!("Token out mint: {}", token_out_mint);
 
@@ -186,7 +187,6 @@ pub async fn buy_swap(
                 dbg!("Transaction sent successfully: {}", signature);
             }
             Err(e) => {
-                println!("Error sending transaction: {:?}", e);
                 return Err(SwapError::TransactionError(e.to_string()));
             }
         }
@@ -209,7 +209,6 @@ pub async fn buy_swap(
 
     // Send some sol from account to the ata and then call sync native
     if token_in.is_native() && ata_creation_bundle.token_in.balance < amount_in {
-        println!("Input token is native");
         let transfer_amount = amount_in - ata_creation_bundle.token_in.balance;
         let transfer_instruction = solana_sdk::system_instruction::transfer(
             &keypair_arc.pubkey().clone(),
@@ -348,7 +347,6 @@ pub async fn buy_swap(
                         let token_balance = client
                             .get_balance(&user_out_token_account).await
                             .unwrap();
-                        println!("User out-tokens ATA balance={}", token_balance);
 
                         if token_balance == 0 {
                             slippage = 5.0;

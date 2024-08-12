@@ -186,7 +186,6 @@ impl MongoHandler {
         let document = match collection.find_one(filter, None).await {
             Ok(doc) => doc,
             Err(e) => {
-                eprintln!("Error querying MongoDB: {}", e);
                 return Err(e);
             }
         };
@@ -196,13 +195,11 @@ impl MongoHandler {
                 match bson::from_document(doc) {
                     Ok(buy_transaction) => Ok(buy_transaction),
                     Err(e) => {
-                        eprintln!("Error deserializing BuyTransaction: {}", e);
                         Err(MongoError::from(e)) // You might want to adjust this to match your error type
                     }
                 }
             }
             None => {
-                eprintln!("No document found for token mint: {}", token_mint);
                 Ok(BuyTransaction {
                     transaction_signature: "".to_string(),
                     token_info: TokenInfo {
@@ -248,20 +245,8 @@ impl MongoHandler {
 
         // Perform the update operation
         match collection.update_one(filter.clone(), update, None).await {
-            Ok(update_result) => {
-                if update_result.matched_count == 0 {
-                    println!("No document found with mint: {}", mint);
-                } else if update_result.modified_count == 0 {
-                    println!("Document with mint: {} was not modified", mint);
-                } else {
-                    println!("Successfully updated document with mint: {}", mint);
-                }
-                Ok(())
-            }
-            Err(e) => {
-                println!("Failed to update document with mint: {}. Error: {:?}", mint, e);
-                Err(e)
-            }
+            Ok(update_result) => { Ok(()) }
+            Err(e) => { Err(e) }
         }
     }
 
@@ -279,10 +264,7 @@ impl MongoHandler {
             Some(doc) => {
                 match bson::from_document::<TradeState>(doc) {
                     Ok(trade_state) => Ok(trade_state),
-                    Err(e) => {
-                        eprintln!("Error deserializing TradeState: {}", e);
-                        Err(MongoError::from(e))
-                    }
+                    Err(e) => { Err(MongoError::from(e)) }
                 }
             }
             None => {

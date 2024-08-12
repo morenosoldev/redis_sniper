@@ -110,41 +110,29 @@ pub async fn pump_fun_sell(
         let balance = token_balance.ui_amount.unwrap_or(0.0);
         let rounded_balance = (balance * 1000000.0).round() / 1000000.0; // Rounds to 6 decimal places
 
-        println!("Token balance: {:?}", rounded_balance);
-        println!("Token amount: {:?}", token_amount as f64);
-
         // Check if the rounded balance is less than or equal to epsilon
         if rounded_balance <= epsilon {
-            eprintln!("Insufficient token balance: {:?}", rounded_balance);
-
             // Here we handle the case where the balance is not effectively zero
             // Proceed to check if the token is already sold
             match mongo_handler.is_token_sold("solsniper", "tokens", &sell_transaction.mint).await {
                 Ok(true) => {
-                    eprintln!("Token already sold. Exiting...");
                     return Err("Token already sold".into());
                 }
                 Ok(false) => {
                     let signature = find_sell_signature(&sell_transaction.mint).await?;
-                    println!("Token not sold. Finder signature now proceeding.");
 
                     if let Err(err) = confirm_sell(&signature, sell_transaction, None).await {
-                        eprintln!("Error in confirm_sell: {:?}", err);
                         return Err(err.into());
                     }
                     return Ok(signature);
                 }
                 Err(err) => {
-                    eprintln!("Error checking if token is sold: {:?}", err);
                     return Err(err.into());
                 }
             }
-        } else {
-            println!("Balance is sufficient, proceeding with the operation.");
         }
     } else {
         // Handle the case where fetching the token balance fails
-        eprintln!("Failed to fetch token balance.");
         return Err("Failed to fetch token balance".into());
     }
 
@@ -163,7 +151,6 @@ pub async fn pump_fun_sell(
         let coin_data = match get_coin_data(mint_str).await {
             Ok(data) => data,
             Err(_) => {
-                eprintln!("Failed to retrieve coin data...");
                 return Err("Failed to retrieve coin data...".into());
             }
         };
@@ -218,12 +205,10 @@ pub async fn pump_fun_sell(
 
         match create_transaction(instructions.clone(), payer.insecure_clone()).await {
             Ok(tx) => {
-                println!("Transaction sent successfully: {}", tx);
                 confirm_sell(&tx, sell_transaction, Some(sol_out_f64)).await?;
                 return Ok(tx);
             }
             Err(e) => {
-                eprintln!("Error sending transaction: {:?}", e);
                 instructions.clear(); // Clear instructions to recalculate in the next iteration
             }
         }

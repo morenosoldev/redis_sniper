@@ -138,8 +138,6 @@ pub async fn get_program_account(
             }
         ).await;
 
-        println!("{:?}", accounts);
-
         match accounts {
             Ok(accounts) => Ok(accounts.into_iter().next()),
             Err(e) => Err(Box::new(e)),
@@ -318,8 +316,6 @@ pub async fn calculate_sol_amount_received(
     _rpc_client: &Arc<RpcClient>,
     _mint: &Pubkey
 ) -> Result<f64, Box<dyn std::error::Error>> {
-    println!("Transaction: {:?}", tx);
-
     let meta = tx.transaction.meta.as_ref().ok_or("No meta found in the transaction")?;
 
     // Get the pre and post balances from the meta
@@ -342,8 +338,6 @@ pub async fn calculate_sol_amount_received(
 
     // Convert lamports to SOL (1 SOL = 1_000_000_000 lamports)
     let sol_amount = sol_amount_received / 1_000_000_000.0;
-
-    println!("Calculated SOL amount: {}", sol_amount);
 
     Ok(sol_amount)
 }

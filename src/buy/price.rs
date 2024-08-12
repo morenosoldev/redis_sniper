@@ -61,7 +61,6 @@ pub async fn get_bonding_curve(
                     let data: [u8; 49] = account.data
                         .try_into()
                         .map_err(|_| format!("Invalid data length: {}", data_length))?;
-                    println!("Raw bytes: {:?}", data);
 
                     let layout = BondingCurveLayout {
                         blob1: u64::from_le_bytes(data[0..8].try_into()?),
@@ -73,18 +72,12 @@ pub async fn get_bonding_curve(
                         complete: data[48] != 0,
                     };
 
-                    println!("Parsed BondingCurveLayout: {:?}", layout);
                     return Ok(layout);
                 } else {
                     if retries >= MAX_RETRIES {
                         dbg!("Max retries reached. Account not found.");
                         return Err("Account not found after max retries".into());
                     }
-                    println!(
-                        "Attempt {} failed: Account not found. Retrying in {:?}...",
-                        retries + 1,
-                        delay
-                    );
                     sleep(delay).await;
                     retries += 1;
                     delay = Duration::from_millis(INITIAL_DELAY_MS * (2u64).pow(retries));
@@ -96,7 +89,6 @@ pub async fn get_bonding_curve(
                     dbg!("Max retries reached. Last dbg: {}", &e);
                     return Err(format!("Max retries reached. Last dbg: {}", e).into());
                 }
-                println!("Attempt {} failed: {}. Retrying in {:?}...", retries + 1, e, delay);
                 sleep(delay).await;
                 retries += 1;
                 delay = Duration::from_millis(INITIAL_DELAY_MS * (2u64).pow(retries));

@@ -59,8 +59,6 @@ async fn handle_trade_message(payload: String) {
                         &in_token_pubkey
                     ).await;
 
-                    println!("Buy pool result: {:?}", buy_pool_result);
-
                     if let Ok(Some(buy_pool)) = buy_pool_result {
                         // Proceed with the buy swap
                         match buy::buy::buy_swap(buy_pool, tx.lp_decimals, tx.amount_in).await {

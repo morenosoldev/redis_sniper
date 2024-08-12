@@ -117,21 +117,17 @@ pub async fn sell_swap(
     if balance == 0 {
         match mongo_handler.is_token_sold("solsniper", "tokens", &sell_transaction.mint).await {
             Ok(true) => {
-                eprintln!("Token already sold. Exiting...");
                 return Err("Token already sold".into());
             }
             Ok(false) => {
                 let signature = find_sell_signature(&sell_transaction.mint).await?;
-                println!("Token not sold. Finder signature now proceeding.");
 
                 if let Err(err) = confirm_sell(&signature, sell_transaction, None).await {
-                    eprintln!("Error in confirm_sell: {:?}", err);
                     return Err(err.into());
                 }
                 return Ok(signature);
             }
             Err(err) => {
-                eprintln!("Error checking if token is sold: {:?}", err);
                 return Err(err.into());
             }
         }
@@ -238,7 +234,6 @@ pub async fn sell_swap(
                         client.get_transaction(&signature, UiTransactionEncoding::JsonParsed).await
                     {
                         Ok(_confirmed_transaction) => {
-                            println!("Transaction confirmed: {}", signature);
                             if
                                 let Err(err) = confirm_sell(
                                     &signature,
@@ -246,13 +241,11 @@ pub async fn sell_swap(
                                     None
                                 ).await
                             {
-                                eprintln!("Error in confirm_sell: {:?}", err);
                                 return Err(err.into());
                             }
                             confirmed = true;
                         }
                         Err(err) => {
-                            eprintln!("Error getting confirmed transaction: {:?}", err);
                             if
                                 err.to_string().contains("not confirmed") ||
                                 err.to_string().contains("invalid type: null")
@@ -269,36 +262,27 @@ pub async fn sell_swap(
                 if confirmed {
                     return Ok(signature);
                 } else {
-                    eprintln!("Failed to confirm transaction after {} retries", max_retries);
                     return Err("Transaction not confirmed after max retries".into());
                 }
             }
             Err(e) => {
-                eprintln!("Error sending smart transaction: {:?}", e);
-
                 match
                     mongo_handler.is_token_sold("solsniper", "tokens", &sell_transaction.mint).await
                 {
                     Ok(true) => {
                         let signature = find_sell_signature(&sell_transaction.mint).await?;
-                        println!("Token already sold. Finder signature nu");
                         if let Err(err) = confirm_sell(&signature, sell_transaction, None).await {
-                            eprintln!("Error in confirm_sell: {:?}", err);
                             return Err(err.into());
                         }
                         return Ok(signature);
                     }
-                    Ok(false) => {
-                        eprintln!("Token not sold. Retrying transaction...");
-                    }
+                    Ok(false) => {}
                     Err(err) => {
-                        eprintln!("Error checking if token is sold: {:?}", err);
                         return Err(err.into());
                     }
                 }
 
                 if retry_count < max_retries {
-                    eprintln!("Retrying transaction... Attempt {}", retry_count + 1);
                     tokio::time::sleep(retry_delay).await;
                     retry_count += 1;
                     continue;
@@ -353,7 +337,6 @@ pub async fn find_sell_signature(mint_address: &str) -> Result<Signature, Box<dy
 
         // Check if the transaction involves the wallet and the mint address
         if is_sell_transaction(&post_balances, mint_address) {
-            println!("Found transaction signature: {}", signature.signature);
             return Ok(Signature::from_str(&signature.signature).unwrap());
         }
     }

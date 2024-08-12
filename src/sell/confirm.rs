@@ -31,7 +31,7 @@ pub async fn confirm_sell(
     })?;
 
     let mut retry_count = 0;
-    let max_retries = 2;
+    let max_retries = 3;
     let retry_delay = Duration::from_secs(10);
 
     let usd_sol_price = get_current_sol_price().await?;
@@ -87,7 +87,6 @@ pub async fn confirm_sell(
                 buy_transaction.amount = buy_transaction.amount - (sell_transaction.amount as f64);
                 mongo_handler.update_buy_transaction(&buy_transaction).await?;
 
-                println!("Buy transaction amount: {}", buy_transaction.amount);
                 if buy_transaction.amount == 0.0 {
                     mongo_handler.update_token_metadata_sold_field(
                         &sell_transaction.mint,
@@ -96,7 +95,6 @@ pub async fn confirm_sell(
                     ).await?;
                 }
 
-                println!("Sol amount: {}", sol_amount);
                 trade_state.taken_out += sol_amount;
                 trade_state.remaining -= 0.0;
 
@@ -130,12 +128,9 @@ pub async fn confirm_sell(
                     "sell_transactions"
                 ).await?;
 
-                println!("Sell transaction confirmed");
-
                 confirmed = true;
             }
-            Err(err) => {
-                eprintln!("Error fetching transaction: {:?}", err);
+            Err(_err) => {
                 retry_count += 1;
                 tokio::time::sleep(retry_delay).await;
             }

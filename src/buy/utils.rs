@@ -156,8 +156,6 @@ pub async fn get_program_account(
             }
         ).await;
 
-        println!("{:?}", accounts);
-
         match accounts {
             Ok(accounts) => Ok(accounts.into_iter().next()),
             Err(e) => Err(Box::new(e)),
@@ -236,7 +234,6 @@ pub async fn get_out_amount(
         }
     };
 
-    println!("{:?}", swap_response);
     let output_amount = match swap_response.data.outputAmount.parse::<u64>() {
         Ok(amount) => amount,
         Err(err) => {
@@ -415,17 +412,12 @@ pub fn get_second_instruction_amount(
             // Get the desired instruction
             let instruction = &inner.instructions[instruction_index];
 
-            // Debug print the instruction to understand its structure
-            println!("{:?}", instruction);
-
             // Check if the instruction is parsed
             if let UiInstruction::Parsed(parsed_instruction) = instruction {
                 if let UiParsedInstruction::Parsed(instruct) = parsed_instruction {
                     // Extract the amount from the parsed data
                     if let Some(info) = instruct.parsed.get("info") {
-                        println!("Info: {:?}", info);
                         if let Some(amount) = info.get("amount") {
-                            println!("Amount: {:?}", amount);
                             if let Value::String(amount_str) = amount {
                                 return Some(amount_str.clone());
                             }
@@ -590,8 +582,6 @@ async fn token_ata_creation_instruction<
 pub async fn calculate_sol_amount_spent(
     tx: &EncodedConfirmedTransactionWithStatusMeta
 ) -> Result<f64, Box<dyn std::error::Error>> {
-    println!("Transaction: {:?}", tx);
-
     let meta = tx.transaction.meta.as_ref().ok_or("No meta found in the transaction")?;
 
     // Get the pre and post balances from the meta
@@ -614,8 +604,6 @@ pub async fn calculate_sol_amount_spent(
 
     // Convert lamports to SOL (1 SOL = 1_000_000_000 lamports)
     let sol_amount = sol_amount_spent / 1_000_000_000.0;
-
-    println!("Calculated SOL amount spent: {}", sol_amount);
 
     Ok(sol_amount)
 }
