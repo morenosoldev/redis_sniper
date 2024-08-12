@@ -309,7 +309,7 @@ pub async fn buy_swap(
             },
         };
 
-        match helius.send_smart_transaction_with_tip(config, Some(10000), Some("Amsterdam")).await {
+        match helius.send_smart_transaction_with_tip(config, Some(10000), Some("NY")).await {
             Ok(signature) => {
                 dbg!("Transaction sent successfully: {}", signature);
                 let saved_details = save_buy_details(
