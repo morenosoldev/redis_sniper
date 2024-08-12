@@ -1,7 +1,8 @@
 use crate::sell::confirm::confirm_sell;
 use super::utils;
+use super::mongo;
+use mongo::MongoHandler;
 use super::mongo::TokenMetadata;
-use helius::error::HeliusError;
 use spl_token_client::client::{ ProgramClient, ProgramRpcClient, ProgramRpcClientSendTransaction };
 use spl_token_client::token::Token;
 use solana_sdk::signature::Signer;
@@ -20,6 +21,12 @@ use std::str::FromStr;
 use solana_transaction_status::UiTransactionEncoding;
 use helius::types::*;
 use helius::Helius;
+use std::error::Error;
+use solana_client::rpc_client::GetConfirmedSignaturesForAddress2Config;
+use solana_sdk::commitment_config::CommitmentConfig;
+use solana_client::rpc_config::RpcTransactionConfig;
+use solana_transaction_status::UiTransactionTokenBalance;
+use solana_transaction_status::option_serializer::OptionSerializer;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SellTransaction {
@@ -56,6 +63,10 @@ pub async fn sell_swap(
     let program_client: Arc<dyn ProgramClient<ProgramRpcClientSendTransaction>> = Arc::new(
         ProgramRpcClient::new(client.clone(), ProgramRpcClientSendTransaction)
     );
+
+    let mongo_handler = MongoHandler::new().await.map_err(|err| {
+        format!("Error creating MongoDB handler: {:?}", err)
+    })?;
 
     let out_token: Pubkey = Pubkey::from_str(
         "So11111111111111111111111111111111111111112"
@@ -104,8 +115,28 @@ pub async fn sell_swap(
     let balance = user_in_acct.base.amount;
 
     if balance == 0 {
-        return Err("User has no balance in the input token account".into());
+        match mongo_handler.is_token_sold("solsniper", "tokens", &sell_transaction.mint).await {
+            Ok(true) => {
+                eprintln!("Token already sold. Exiting...");
+                return Err("Token already sold".into());
+            }
+            Ok(false) => {
+                let signature = find_sell_signature(&sell_transaction.mint).await?;
+                println!("Token not sold. Finder signature now proceeding.");
+
+                if let Err(err) = confirm_sell(&signature, sell_transaction, None).await {
+                    eprintln!("Error in confirm_sell: {:?}", err);
+                    return Err(err.into());
+                }
+                return Ok(signature);
+            }
+            Err(err) => {
+                eprintln!("Error checking if token is sold: {:?}", err);
+                return Err(err.into());
+            }
+        }
     }
+
     dbg!("User input-tokens ATA balance={}", balance);
     if in_token_client.is_native() && balance < (sell_transaction.amount as u64) {
         let transfer_amt = (sell_transaction.amount as u64) - balance;
@@ -148,7 +179,6 @@ pub async fn sell_swap(
 
     let swap_amount_in = sell_transaction.amount;
 
-    println!("Swap amount in: {}", swap_amount_in);
     let min_amount_out = 0;
 
     dbg!("Initializing swap with input tokens as pool base token");
@@ -176,9 +206,9 @@ pub async fn sell_swap(
     )?;
     instructions.push(swap_instruction);
 
-    let mut retry_count = 0;
-    let max_retries = 4;
-    let retry_delay = tokio::time::Duration::from_secs(5);
+    let max_retries = 3;
+    let retry_delay = tokio::time::Duration::from_secs(1);
+    let mut retry_count: i32 = 0;
 
     loop {
         // Create the SmartTransactionConfig
@@ -193,14 +223,14 @@ pub async fn sell_swap(
                 skip_preflight: true,
                 preflight_commitment: None,
                 encoding: None,
-                max_retries: Some(4),
+                max_retries: None,
                 min_context_slot: None,
             },
         };
 
-        match helius.send_smart_transaction(config).await {
+        match helius.send_smart_transaction_with_tip(config, Some(10000), Some("Amsterdam")).await {
             Ok(signature) => {
-                dbg!("Transaction sent successfully: {}", signature);
+                dbg!("Transaction sent successfully: {}", &signature);
                 let mut confirmed = false;
 
                 while !confirmed && retry_count <= max_retries {
@@ -208,7 +238,17 @@ pub async fn sell_swap(
                         client.get_transaction(&signature, UiTransactionEncoding::JsonParsed).await
                     {
                         Ok(_confirmed_transaction) => {
-                            confirm_sell(&signature, sell_transaction, None).await?;
+                            println!("Transaction confirmed: {}", signature);
+                            if
+                                let Err(err) = confirm_sell(
+                                    &signature,
+                                    sell_transaction,
+                                    None
+                                ).await
+                            {
+                                eprintln!("Error in confirm_sell: {:?}", err);
+                                return Err(err.into());
+                            }
                             confirmed = true;
                         }
                         Err(err) => {
@@ -218,32 +258,109 @@ pub async fn sell_swap(
                                 err.to_string().contains("invalid type: null")
                             {
                                 retry_count += 1;
-                                tokio::time::sleep(retry_delay).await;
+                                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                             } else {
-                                break;
+                                return Err(err.into());
                             }
                         }
                     }
                 }
 
-                return Ok(signature);
+                if confirmed {
+                    return Ok(signature);
+                } else {
+                    eprintln!("Failed to confirm transaction after {} retries", max_retries);
+                    return Err("Transaction not confirmed after max retries".into());
+                }
             }
             Err(e) => {
                 eprintln!("Error sending smart transaction: {:?}", e);
-                // Check if the error is a timeout (code 408) or other transient errors
-                if
-                    e.to_string().contains("408 Request Timeout") ||
-                    e.to_string().contains("some other transient error")
+
+                match
+                    mongo_handler.is_token_sold("solsniper", "tokens", &sell_transaction.mint).await
                 {
-                    retry_count += 1;
-                    if retry_count <= max_retries {
-                        eprintln!("Retrying transaction... Attempt {}", retry_count);
-                        tokio::time::sleep(retry_delay).await;
-                        continue;
+                    Ok(true) => {
+                        let signature = find_sell_signature(&sell_transaction.mint).await?;
+                        println!("Token already sold. Finder signature nu");
+                        if let Err(err) = confirm_sell(&signature, sell_transaction, None).await {
+                            eprintln!("Error in confirm_sell: {:?}", err);
+                            return Err(err.into());
+                        }
+                        return Ok(signature);
+                    }
+                    Ok(false) => {
+                        eprintln!("Token not sold. Retrying transaction...");
+                    }
+                    Err(err) => {
+                        eprintln!("Error checking if token is sold: {:?}", err);
+                        return Err(err.into());
                     }
                 }
-                return Err(e.into());
+
+                if retry_count < max_retries {
+                    eprintln!("Retrying transaction... Attempt {}", retry_count + 1);
+                    tokio::time::sleep(retry_delay).await;
+                    retry_count += 1;
+                    continue;
+                } else {
+                    return Err(e.into());
+                }
             }
         }
     }
+}
+
+pub async fn find_sell_signature(mint_address: &str) -> Result<Signature, Box<dyn Error>> {
+    let rpc_endpoint = std::env
+        ::var("RPC_URL")
+        .expect("You must set the RPC_URL environment variable!");
+    let client = RpcClient::new(rpc_endpoint);
+    let wallet = "4VZscJb8n2iiV4VyUSeaXPFw53mqqwH55BX6JRFaveia";
+
+    let config = GetConfirmedSignaturesForAddress2Config {
+        before: None,
+        until: None,
+        limit: Some(10),
+        commitment: Some(CommitmentConfig::finalized()),
+    };
+    // Fetch the confirmed signatures for the address
+    let confirmed_signatures = client.get_signatures_for_address_with_config(
+        &Pubkey::from_str(wallet).unwrap(),
+        config
+    ).await?;
+
+    for signature in confirmed_signatures {
+        let config = RpcTransactionConfig {
+            encoding: Some(UiTransactionEncoding::Json),
+            commitment: Some(CommitmentConfig::confirmed()),
+            max_supported_transaction_version: Some(0),
+        };
+
+        let transaction = client.get_transaction_with_config(
+            &Signature::from_str(&signature.signature).unwrap(),
+            config
+        ).await?;
+
+        let post_balances: Vec<UiTransactionTokenBalance> = transaction.transaction.meta
+            .as_ref()
+            .and_then(|data| {
+                match &data.post_token_balances {
+                    OptionSerializer::Some(inner) => Some(inner.clone()),
+                    _ => None,
+                }
+            })
+            .unwrap_or_default();
+
+        // Check if the transaction involves the wallet and the mint address
+        if is_sell_transaction(&post_balances, mint_address) {
+            println!("Found transaction signature: {}", signature.signature);
+            return Ok(Signature::from_str(&signature.signature).unwrap());
+        }
+    }
+
+    Err("No transaction signatures found for the provided mint address".into())
+}
+
+fn is_sell_transaction(post_balances: &Vec<UiTransactionTokenBalance>, mint_address: &str) -> bool {
+    return post_balances.iter().any(|balance| balance.mint == mint_address);
 }

@@ -3,7 +3,7 @@ use mongodb::error::Error as MongoError;
 use serde::Serialize;
 use serde::Deserialize;
 use mongodb::bson::DateTime;
-use mongodb::error::ErrorKind;
+use futures::stream::TryStreamExt;
 
 pub struct MongoHandler {
     client: Client,
@@ -129,15 +129,45 @@ impl MongoHandler {
         // Check if amount or sol_amount is 0 or 0.0
         if buy_transaction.amount == 0.0 {
             self.update_token_metadata_sold_field(
+                &buy_transaction.token_info.base_mint,
                 "solsniper",
-                "tokens",
-                &buy_transaction.token_info.base_mint
+                "tokens"
             ).await?;
         }
 
         collection.update_one(filter, update, None).await?;
 
         Ok(())
+    }
+
+    pub async fn is_token_sold(
+        &self,
+        db_name: &str,
+        collection_name: &str,
+        mint_address: &str
+    ) -> Result<bool, MongoError> {
+        let my_coll: Collection<Document> = self.client
+            .database(db_name)
+            .collection(collection_name);
+
+        let filter = doc! { "token_metadata.mint": mint_address };
+
+        // Find the document with the specific mint address
+        let mut cursor = my_coll.find(filter, None).await?;
+        let document = match cursor.try_next().await? {
+            Some(doc) => doc,
+            None => {
+                return Ok(false);
+            }
+        };
+
+        // Check if the "sold" field is true
+        if let Some(sold) = document.get("sold") {
+            if let bson::Bson::Boolean(sold) = sold {
+                return Ok(*sold); // Dereferencing the borrow
+            }
+        }
+        Ok(false)
     }
 
     pub async fn get_buy_transaction_from_token(
@@ -216,10 +246,23 @@ impl MongoHandler {
             }
         };
 
-        // Update the document matching the filter
-        collection.update_one(filter, update, None).await?;
-
-        Ok(())
+        // Perform the update operation
+        match collection.update_one(filter.clone(), update, None).await {
+            Ok(update_result) => {
+                if update_result.matched_count == 0 {
+                    println!("No document found with mint: {}", mint);
+                } else if update_result.modified_count == 0 {
+                    println!("Document with mint: {} was not modified", mint);
+                } else {
+                    println!("Successfully updated document with mint: {}", mint);
+                }
+                Ok(())
+            }
+            Err(e) => {
+                println!("Failed to update document with mint: {}. Error: {:?}", mint, e);
+                Err(e)
+            }
+        }
     }
 
     pub async fn fetch_trade_state(&self, token_mint: &str) -> Result<TradeState, MongoError> {

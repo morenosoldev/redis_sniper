@@ -1,10 +1,10 @@
-use std::{ops::Deref, sync::Arc};
+use std::{ ops::Deref, sync::Arc };
 
 use crate::config::Config;
-use crate::error::{HeliusError, Result};
+use crate::error::{ HeliusError, Result };
 use crate::rpc_client::RpcClient;
 use crate::types::Cluster;
-use crate::websocket::{EnhancedWebsocket, ENHANCED_WEBSOCKET_URL};
+use crate::websocket::{ EnhancedWebsocket, ENHANCED_WEBSOCKET_URL };
 
 use reqwest::Client;
 use solana_client::nonblocking::rpc_client::RpcClient as AsyncSolanaRpcClient;
@@ -47,7 +47,9 @@ impl Helius {
     pub fn new(api_key: &str, cluster: Cluster) -> Result<Self> {
         let config: Arc<Config> = Arc::new(Config::new(api_key, cluster)?);
         let client: Client = Client::new();
-        let rpc_client: Arc<RpcClient> = Arc::new(RpcClient::new(Arc::new(client.clone()), config.clone())?);
+        let rpc_client: Arc<RpcClient> = Arc::new(
+            RpcClient::new(Arc::new(client.clone()), config.clone())?
+        );
         Ok(Helius {
             config,
             client,
@@ -77,7 +79,9 @@ impl Helius {
         let config: Arc<Config> = Arc::new(Config::new(api_key, cluster)?);
         let client: Client = Client::new();
         let url: String = format!("{}/?api-key={}", config.endpoints.rpc, config.api_key);
-        let async_solana_client: Arc<AsyncSolanaRpcClient> = Arc::new(AsyncSolanaRpcClient::new(url));
+        let async_solana_client: Arc<AsyncSolanaRpcClient> = Arc::new(
+            AsyncSolanaRpcClient::new(url)
+        );
 
         Ok(Helius {
             config: config.clone(),
@@ -99,7 +103,9 @@ impl Helius {
     pub async fn new_with_ws(api_key: &str, cluster: Cluster) -> Result<Self> {
         let config: Arc<Config> = Arc::new(Config::new(api_key, cluster)?);
         let client: Client = Client::new();
-        let rpc_client: Arc<RpcClient> = Arc::new(RpcClient::new(Arc::new(client.clone()), config.clone())?);
+        let rpc_client: Arc<RpcClient> = Arc::new(
+            RpcClient::new(Arc::new(client.clone()), config.clone())?
+        );
         let wss: String = format!("{}{}", ENHANCED_WEBSOCKET_URL, api_key);
         let ws_client: Arc<EnhancedWebsocket> = Arc::new(EnhancedWebsocket::new(&wss).await?);
         Ok(Helius {
@@ -126,10 +132,10 @@ impl Helius {
     pub fn async_connection(&self) -> Result<HeliusAsyncSolanaClient> {
         match &self.async_rpc_client {
             Some(client) => Ok(HeliusAsyncSolanaClient::new(client.clone())),
-            None => Err(HeliusError::ClientNotInitialized {
-                text: "An asynchronous Solana RPC client must be initialized before trying to access async_connection"
-                    .to_string(),
-            }),
+            None =>
+                Err(HeliusError::ClientNotInitialized {
+                    text: "An asynchronous Solana RPC client must be initialized before trying to access async_connection".to_string(),
+                }),
         }
     }
 

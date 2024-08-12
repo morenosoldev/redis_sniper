@@ -15,6 +15,7 @@ use spl_token_client::{
 };
 use solana_account_decoder::UiAccountEncoding;
 use solana_sdk::commitment_config::CommitmentConfig;
+use solana_transaction_status::EncodedConfirmedTransactionWithStatusMeta;
 
 use std::sync::Arc;
 use std::error::Error;
@@ -24,6 +25,40 @@ use solana_client::{
     rpc_config::{ RpcProgramAccountsConfig, RpcAccountInfoConfig },
 };
 use raydium_sdk::LiquidityPoolKeys;
+use crate::buy::buy::SwapError;
+
+#[derive(Debug, Deserialize)]
+struct SwapResponse {
+    id: String,
+    success: bool,
+    version: String,
+    data: SwapData,
+}
+
+#[derive(Debug, Deserialize)]
+struct SwapData {
+    swapType: String,
+    inputMint: String,
+    inputAmount: String,
+    outputMint: String,
+    outputAmount: String,
+    otherAmountThreshold: String,
+    slippageBps: i32,
+    priceImpactPct: f64,
+    referrerAmount: String,
+    routePlan: Vec<RoutePlan>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RoutePlan {
+    poolId: String,
+    inputMint: String,
+    outputMint: String,
+    feeMint: String,
+    feeRate: i32,
+    feeAmount: String,
+    remainingAccounts: Vec<String>,
+}
 
 #[derive(Serialize, Deserialize)]
 struct MinimalMarketLayoutV3 {
@@ -147,6 +182,76 @@ async fn get_minimal_market_v3(client: &RpcClient, market_id: Pubkey) -> Minimal
         ::deserialize(&market_info.value.unwrap().data)
         .unwrap();
     minimal_market_layout_v3
+}
+
+pub async fn get_out_amount(
+    output_mint: &str,
+    amount: u64,
+    slippage_pct: &f64
+) -> Result<(u64, u64), SwapError> {
+    let slippage_bps = (slippage_pct * 100.0).round() as i32;
+
+    let url = format!(
+        "https://transaction-v1.raydium.io/compute/swap-base-in?inputMint=So11111111111111111111111111111111111111112&outputMint={}&amount={}&slippageBps={}&txVersion=V0",
+        output_mint,
+        amount,
+        slippage_bps
+    );
+
+    let client = reqwest::Client::new();
+    let response = match
+        client
+            .get(&url)
+            .header(
+                "User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0"
+            )
+            .header("Accept", "application/json, text/plain, */*")
+            .header("Accept-Language", "en-US,en;q=0.5")
+            .header("Accept-Encoding", "gzip, deflate, br, zstd")
+            .header("Referer", "https://raydium.io/")
+            .header("Origin", "https://raydium.io")
+            .header("Connection", "keep-alive")
+            .header("Sec-Fetch-Dest", "empty")
+            .header("Sec-Fetch-Mode", "cors")
+            .header("Sec-Fetch-Site", "same-site")
+            .header("Sec-GPC", "1")
+            .header("TE", "trailers")
+            .header(
+                "Cookie",
+                "__cf_bm=hVD6YdWXvyXMAGrApQGdgnXTDA8rjORMmO6F6dIa1l0-1722813884-1.0.1.1-.LXXz1cn23gsMerhHo9pmRreQ.Su6Xg7jqTkzWUzWUrPZF_wuQQgIpqCkX0B7KxQ4sskIrXriotSRVrDtSXZBQ; path=/; expires=Sun, 04-Aug-24 23:54:44 GMT; domain=.raydium.io; HttpOnly; Secure; SameSite=None"
+            )
+            .send().await
+    {
+        Ok(resp) => { resp }
+        Err(err) => {
+            return Err(SwapError::TokenError(err.to_string()));
+        }
+    };
+
+    let swap_response: SwapResponse = match response.json().await {
+        Ok(json) => json,
+        Err(err) => {
+            return Err(SwapError::TokenError(err.to_string()));
+        }
+    };
+
+    println!("{:?}", swap_response);
+    let output_amount = match swap_response.data.outputAmount.parse::<u64>() {
+        Ok(amount) => amount,
+        Err(err) => {
+            return Err(SwapError::TokenError(err.to_string()));
+        }
+    };
+
+    let min_amount = match swap_response.data.otherAmountThreshold.parse::<u64>() {
+        Ok(amount) => amount,
+        Err(err) => {
+            return Err(SwapError::TokenError(err.to_string()));
+        }
+    };
+
+    Ok((output_amount, min_amount))
 }
 
 fn create_pool_keys(
@@ -480,6 +585,39 @@ async fn token_ata_creation_instruction<
         }
     };
     Ok((instruction, payer_token_account, amount))
+}
+
+pub async fn calculate_sol_amount_spent(
+    tx: &EncodedConfirmedTransactionWithStatusMeta
+) -> Result<f64, Box<dyn std::error::Error>> {
+    println!("Transaction: {:?}", tx);
+
+    let meta = tx.transaction.meta.as_ref().ok_or("No meta found in the transaction")?;
+
+    // Get the pre and post balances from the meta
+    let pre_balances = &meta.pre_balances;
+    let post_balances = &meta.post_balances;
+
+    if pre_balances.len() != post_balances.len() {
+        return Err("Pre and post balances length mismatch".into());
+    }
+
+    // Iterate through balances to find the difference
+    let mut sol_amount_spent: f64 = 0.0;
+
+    for (pre_balance, post_balance) in pre_balances.iter().zip(post_balances.iter()) {
+        if pre_balance > post_balance {
+            let difference = pre_balance - post_balance;
+            sol_amount_spent += difference as f64;
+        }
+    }
+
+    // Convert lamports to SOL (1 SOL = 1_000_000_000 lamports)
+    let sol_amount = sol_amount_spent / 1_000_000_000.0;
+
+    println!("Calculated SOL amount spent: {}", sol_amount);
+
+    Ok(sol_amount)
 }
 
 /// Helper function for pubkey serialize

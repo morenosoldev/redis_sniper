@@ -1,10 +1,6 @@
 use solana_sdk::pubkey::Pubkey;
 use serde::{ Deserialize, Serialize };
-use solana_transaction_status::UiInnerInstructions;
-use solana_transaction_status::option_serializer::OptionSerializer;
 use solana_transaction_status::EncodedConfirmedTransactionWithStatusMeta;
-use solana_transaction_status::UiInstruction;
-use solana_transaction_status::UiParsedInstruction;
 use solana_client::{
     nonblocking::rpc_client::RpcClient,
     rpc_filter::{ RpcFilterType, Memcmp, MemcmpEncodedBytes },
@@ -15,7 +11,6 @@ use solana_account_decoder::UiAccountEncoding;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::error::Error;
-use serde_json::Value;
 
 #[derive(Serialize, Deserialize)]
 struct MinimalMarketLayoutV3 {
@@ -319,50 +314,36 @@ pub fn get_associated_authority(
 }
 
 pub async fn calculate_sol_amount_received(
-    tx: &EncodedConfirmedTransactionWithStatusMeta
+    tx: &EncodedConfirmedTransactionWithStatusMeta,
+    _rpc_client: &Arc<RpcClient>,
+    _mint: &Pubkey
 ) -> Result<f64, Box<dyn std::error::Error>> {
-    let inner_instructions: Vec<UiInnerInstructions> = tx.transaction.meta
-        .as_ref()
-        .and_then(|data| {
-            match &data.inner_instructions {
-                OptionSerializer::Some(inner) => Some(inner.clone()),
-                _ => None,
-            }
-        })
-        .ok_or("No inner instructions found in the transaction meta")?;
+    println!("Transaction: {:?}", tx);
 
-    let amount_string: Option<String> = get_second_instruction_amount(&inner_instructions);
+    let meta = tx.transaction.meta.as_ref().ok_or("No meta found in the transaction")?;
 
-    // Parse the amount string to f64
-    let amount_f64 = amount_string
-        .ok_or("No amount string found in the inner instructions")?
-        .parse::<f64>()
-        .map_err(|e| format!("Failed to parse amount string: {}", e))?;
+    // Get the pre and post balances from the meta
+    let pre_balances = &meta.pre_balances;
+    let post_balances = &meta.post_balances;
 
-    let sol_amount = amount_f64 / 1_000_000_000.0;
+    if pre_balances.len() != post_balances.len() {
+        return Err("Pre and post balances length mismatch".into());
+    }
 
-    Ok(sol_amount)
-}
+    // Iterate through balances to find the difference
+    let mut sol_amount_received: f64 = 0.0;
 
-fn get_second_instruction_amount(inner_instructions: &Vec<UiInnerInstructions>) -> Option<String> {
-    // Iterate over each UiInnerInstructions
-    for inner in inner_instructions {
-        // Check if there are at least two instructions
-        if inner.instructions.len() >= 2 {
-            // Get the second instruction
-            if let UiInstruction::Parsed(parsed_instruction) = &inner.instructions[1] {
-                if let UiParsedInstruction::Parsed(instruct) = parsed_instruction {
-                    // Extract the amount from the parsed data
-                    if let Some(info) = instruct.parsed.get("info") {
-                        if let Some(amount) = info.get("amount") {
-                            if let Value::String(amount_str) = amount {
-                                return Some(amount_str.clone());
-                            }
-                        }
-                    }
-                }
-            }
+    for (pre_balance, post_balance) in pre_balances.iter().zip(post_balances.iter()) {
+        if post_balance > pre_balance {
+            let difference = post_balance - pre_balance;
+            sol_amount_received += difference as f64;
         }
     }
-    None
+
+    // Convert lamports to SOL (1 SOL = 1_000_000_000 lamports)
+    let sol_amount = sol_amount_received / 1_000_000_000.0;
+
+    println!("Calculated SOL amount: {}", sol_amount);
+
+    Ok(sol_amount)
 }

@@ -5,7 +5,7 @@ use super::mongo;
 use price::get_current_sol_price;
 use mongo::{ TokenInfo, BuyTransaction, MongoHandler, TransactionType };
 use solana_sdk::signature::Signature;
-use utils::{ get_second_instruction_amount, get_token_metadata };
+use utils::{ get_second_instruction_amount, calculate_sol_amount_spent, get_token_metadata };
 use solana_transaction_status::option_serializer::OptionSerializer;
 use solana_transaction_status::UiInnerInstructions;
 use solana_transaction_status::UiTransactionEncoding;
@@ -26,7 +26,6 @@ pub struct TokenVaults {
 pub async fn save_buy_details(
     client: Arc<RpcClient>,
     signature: &Signature,
-    sol_amount: f64,
     lp_decimals: u8,
     mint: &str,
     token_vaults: TokenVaults,
@@ -55,6 +54,8 @@ pub async fn save_buy_details(
                     pump
                 );
 
+                let sol_amount = calculate_sol_amount_spent(&confirmed_transaction).await.unwrap();
+
                 if let Some(ref amount_str) = amount {
                     // Parse the amount as f64
                     let amount = amount_str.parse::<f64>().unwrap_or_default();
@@ -65,7 +66,7 @@ pub async fn save_buy_details(
                     // Adjust the token amount using the decimals
                     let adjusted_token_amount = amount / (10f64).powf(token_decimals);
 
-                    let (buy_price_per_token_in_sol, current_sol_price, buy_price_usd) = if pump {
+                    let (buy_price_per_token_in_sol, current_sol_price, _buy_price_usd) = if pump {
                         // Use calculate_pump_price if the token_mint ends with "pump"
                         match calculate_pump_price(&client.clone(), mint.parse()?).await {
                             Ok(price) => {

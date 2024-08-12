@@ -1,36 +1,15 @@
 use super::{
-    enums::{
-        AssetSortBy,
-        AssetSortDirection,
-        Context,
-        Interface,
-        OwnershipModel,
-        RoyaltyModel,
-        Scope,
-        UseMethod,
-    },
-    AccountWebhookEncoding,
-    CollectionIdentifier,
-    PriorityLevel,
-    SearchAssetsOptions,
-    SearchConditionType,
-    TokenType,
-    TransactionStatus,
-    TransactionType,
-    UiTransactionEncoding,
-    WebhookType,
+    enums::{AssetSortBy, AssetSortDirection, Context, Interface, OwnershipModel, RoyaltyModel, Scope, UseMethod},
+    AccountWebhookEncoding, CollectionIdentifier, PriorityLevel, SearchAssetsOptions, SearchConditionType, TokenType,
+    TransactionStatus, TransactionType, UiTransactionEncoding, WebhookType,
 };
-use crate::types::{ DisplayOptions, GetAssetOptions };
+use crate::types::{DisplayOptions, GetAssetOptions};
 // use chrono::{DateTime, Utc};
-use serde::{ Deserialize, Serialize };
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use solana_client::rpc_config::RpcSendTransactionConfig;
-use solana_sdk::{
-    address_lookup_table::AddressLookupTableAccount,
-    instruction::Instruction,
-    signature::Signer,
-};
+use solana_sdk::{address_lookup_table::AddressLookupTableAccount, instruction::Instruction, signature::Signer};
 
 /// Defines the available clusters supported by Helius
 #[derive(Debug, Clone, PartialEq)]
@@ -49,16 +28,14 @@ pub struct HeliusEndpoints {
 impl HeliusEndpoints {
     pub fn for_cluster(cluster: &Cluster) -> Self {
         match cluster {
-            Cluster::Devnet =>
-                HeliusEndpoints {
-                    api: "https://api-devnet.helius-rpc.com/".to_string(),
-                    rpc: "https://devnet.helius-rpc.com/".to_string(),
-                },
-            Cluster::MainnetBeta =>
-                HeliusEndpoints {
-                    api: "https://api-mainnet.helius-rpc.com/".to_string(),
-                    rpc: "https://mainnet.helius-rpc.com/".to_string(),
-                },
+            Cluster::Devnet => HeliusEndpoints {
+                api: "https://api-devnet.helius-rpc.com/".to_string(),
+                rpc: "https://devnet.helius-rpc.com/".to_string(),
+            },
+            Cluster::MainnetBeta => HeliusEndpoints {
+                api: "https://api-mainnet.helius-rpc.com/".to_string(),
+                rpc: "https://mainnet.helius-rpc.com/".to_string(),
+            },
         }
     }
 }
@@ -818,7 +795,7 @@ pub struct GetPriorityFeeEstimateRequest {
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct MicroLamportPriorityFeeLevels {
-    pub none: f64,
+    pub min: f64,
     pub low: f64,
     pub medium: f64,
     pub high: f64,

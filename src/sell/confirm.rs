@@ -3,7 +3,7 @@ use super::sell::SellTransaction;
 use super::price;
 use super::utils;
 use mongo::{ MongoHandler, SellTransaction as SellTransactionMongo, TokenInfo };
-use solana_client::rpc_client::RpcClient;
+use solana_client::nonblocking::rpc_client::RpcClient;
 use std::sync::Arc;
 use std::time::Duration;
 use price::get_current_sol_price;
@@ -12,6 +12,10 @@ use std::error::Error;
 use solana_transaction_status::UiTransactionEncoding;
 use mongodb::bson::DateTime;
 use solana_sdk::signature::Signature;
+use solana_client::rpc_config::RpcTransactionConfig;
+use solana_sdk::commitment_config::CommitmentConfig;
+use solana_sdk::pubkey::Pubkey;
+use std::str::FromStr;
 
 pub async fn confirm_sell(
     signature: &Signature,
@@ -32,16 +36,26 @@ pub async fn confirm_sell(
 
     let usd_sol_price = get_current_sol_price().await?;
 
+    let config = RpcTransactionConfig {
+        encoding: Some(UiTransactionEncoding::JsonParsed),
+        commitment: Some(CommitmentConfig::confirmed()),
+        max_supported_transaction_version: Some(0),
+    };
+
     let mut confirmed = false;
     while !confirmed && retry_count <= max_retries {
-        match rpc_client.get_transaction(&signature, UiTransactionEncoding::JsonParsed) {
+        match rpc_client.get_transaction_with_config(&signature, config.clone()).await {
             Ok(confirmed_transaction) => {
                 let sell_price = sell_transaction.current_token_price_usd;
                 let sol_amount = match sol_received {
                     Some(amount) => amount,
                     None => {
                         // Calculate sol_amount if sol_received is not provided
-                        calculate_sol_amount_received(&confirmed_transaction).await? as f64
+                        calculate_sol_amount_received(
+                            &confirmed_transaction,
+                            &rpc_client,
+                            &Pubkey::from_str(&sell_transaction.mint).unwrap()
+                        ).await? as f64
                     }
                 };
                 let profit = (sol_amount as f64) - (sell_transaction.sol_amount as f64);
@@ -72,11 +86,15 @@ pub async fn confirm_sell(
 
                 buy_transaction.amount = buy_transaction.amount - (sell_transaction.amount as f64);
                 mongo_handler.update_buy_transaction(&buy_transaction).await?;
-                mongo_handler.update_token_metadata_sold_field(
-                    &sell_transaction.mint,
-                    "solsniper",
-                    "tokens"
-                ).await?;
+
+                println!("Buy transaction amount: {}", buy_transaction.amount);
+                if buy_transaction.amount == 0.0 {
+                    mongo_handler.update_token_metadata_sold_field(
+                        &sell_transaction.mint,
+                        "solsniper",
+                        "tokens"
+                    ).await?;
+                }
 
                 println!("Sol amount: {}", sol_amount);
                 trade_state.taken_out += sol_amount;
@@ -111,6 +129,8 @@ pub async fn confirm_sell(
                     "solsniper",
                     "sell_transactions"
                 ).await?;
+
+                println!("Sell transaction confirmed");
 
                 confirmed = true;
             }

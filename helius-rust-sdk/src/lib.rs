@@ -12,6 +12,7 @@ pub mod types;
 pub mod utils;
 pub mod webhook;
 pub mod websocket;
+pub mod polling;
 
 pub use client::Helius;
 pub use factory::HeliusFactory;

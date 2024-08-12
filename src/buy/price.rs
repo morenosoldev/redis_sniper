@@ -6,12 +6,6 @@ use borsh::{ BorshDeserialize, BorshSerialize };
 use serde::{ Deserialize, Serialize };
 use solana_client::rpc_config::RpcAccountInfoConfig;
 use solana_sdk::commitment_config::CommitmentConfig;
-use solana_transaction_status::{
-    EncodedConfirmedTransactionWithStatusMeta,
-    EncodedTransaction,
-    UiMessage,
-    UiParsedMessage,
-};
 use tokio::time::sleep;
 use solana_account_decoder::UiAccountEncoding;
 use std::convert::TryInto;
@@ -134,67 +128,6 @@ pub async fn mint_to_pump_accounts(mint: &Pubkey) -> Result<PumpAccounts, Box<dy
         dev: Pubkey::default(),
         metadata: Pubkey::default(),
     })
-}
-
-pub fn parse_pump_accounts(
-    tx: EncodedConfirmedTransactionWithStatusMeta
-) -> Result<PumpAccounts, Box<dyn Error>> {
-    if let EncodedTransaction::Json(tx) = &tx.transaction.transaction {
-        if let UiMessage::Parsed(UiParsedMessage { account_keys, .. }) = &tx.message {
-            println!("Account keys: {:?}", account_keys);
-            if account_keys.len() >= 5 {
-                let dev = account_keys[0].pubkey.parse()?;
-                let mint = account_keys[1].pubkey.parse()?;
-                let bonding_curve = account_keys[3].pubkey.parse()?;
-                let associated_bonding_curve = account_keys[4].pubkey.parse()?;
-                let metadata = account_keys[5].pubkey.parse()?;
-
-                return Ok(PumpAccounts {
-                    mint,
-                    bonding_curve,
-                    associated_bonding_curve,
-                    dev,
-                    metadata,
-                });
-            } else {
-                return Err("Not enough account keys".into());
-            }
-        }
-    }
-    Err("Not a JSON transaction".into())
-}
-
-pub fn get_token_amount(
-    virtual_sol_reserves: u64,
-    virtual_token_reserves: u64,
-    real_token_reserves: u64,
-    lamports: u64
-) -> Result<u64, Box<dyn Error>> {
-    let virtual_sol_reserves = virtual_sol_reserves as u128;
-    let virtual_token_reserves = virtual_token_reserves as u128;
-    let amount_in = lamports as u128;
-
-    let reserves_product = virtual_sol_reserves
-        .checked_mul(virtual_token_reserves)
-        .ok_or("Overflow in reserves product calculation")?;
-
-    let new_virtual_sol_reserve = virtual_sol_reserves
-        .checked_add(amount_in)
-        .ok_or("Overflow in new virtual SOL reserve calculation")?;
-
-    let new_virtual_token_reserve = reserves_product
-        .checked_div(new_virtual_sol_reserve)
-        .ok_or("Division by zero or overflow in new virtual token reserve calculation")?
-        .checked_add(1)
-        .ok_or("Overflow in new virtual token reserve calculation")?;
-
-    let amount_out = virtual_token_reserves
-        .checked_sub(new_virtual_token_reserve)
-        .ok_or("Underflow in amount out calculation")?;
-
-    let final_amount_out = std::cmp::min(amount_out, real_token_reserves as u128);
-
-    Ok(final_amount_out as u64)
 }
 
 pub async fn calculate_pump_price(

@@ -13,7 +13,7 @@ async fn main() -> Result<()> {
     let helius: Helius = Helius::new(api_key, cluster).unwrap();
 
     let result: std::result::Result<Hash, ClientError> = helius.connection().get_latest_blockhash();
-    println!("test 2 {:?}", result);
+    println!("{:?}", result);
 
     Ok(())
 }

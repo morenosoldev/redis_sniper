@@ -15,6 +15,10 @@ use reqwest::header::*;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use service::save_buy_details;
 use std::sync::Arc;
+use std::error::Error;
+use solana_sdk::signature::Signature;
+use solana_sdk::instruction::Instruction as SolanaInstruction;
+use solana_client::rpc_config::RpcSendTransactionConfig;
 
 const GLOBAL: &str = "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf";
 const FEE_RECIPIENT: &str = "CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM";
@@ -23,10 +27,8 @@ const RENT: &str = "SysvarRent111111111111111111111111111111111";
 const PUMP_FUN_PROGRAM: &str = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
 const PUMP_FUN_ACCOUNT: &str = "Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1";
 const SYSTEM_PROGRAM_ID: &str = "11111111111111111111111111111111";
-use std::error::Error;
-use solana_sdk::signature::Signature;
-use solana_sdk::instruction::Instruction as SolanaInstruction;
-use solana_client::rpc_config::RpcSendTransactionConfig;
+
+const MAX_RETRIES: usize = 3;
 
 async fn create_transaction(
     instructions: Vec<SolanaInstruction>,
@@ -40,7 +42,7 @@ async fn create_transaction(
 
     let config = SmartTransactionConfig {
         create_config: CreateSmartTransactionConfig {
-            instructions,
+            instructions: instructions.clone(),
             signers: vec![&keypair],
             lookup_tables: None,
             fee_payer: None,
@@ -49,19 +51,19 @@ async fn create_transaction(
             skip_preflight: true,
             preflight_commitment: None,
             encoding: None,
-            max_retries: Some(4),
+            max_retries: None,
             min_context_slot: None,
         },
     };
 
-    match helius.send_smart_transaction(config).await {
+    match helius.send_smart_transaction_with_tip(config, Some(10000), Some("Amsterdam")).await {
         Ok(signature) => {
-            dbg!("Transaction sent successfully: {}", signature);
-            Ok(signature)
+            dbg!("Transaction sent successfully: {}", &signature);
+            return Ok(signature);
         }
         Err(e) => {
-            dbg!("Failed to send transaction: {:?}", &e);
-            Err(Box::new(e)) // Convert the error to a boxed dynamic error
+            dbg!("Failed to send transaction on attempt {}: {:?}", &e);
+            return Err("Failed to send transaction".into());
         }
     }
 }
@@ -75,14 +77,6 @@ pub async fn pump_fun_buy(
         ::var("RPC_URL")
         .expect("You must set the RPC_URL environment variable!");
     let client: Arc<RpcClient> = Arc::new(RpcClient::new(rpc_endpoint.to_string()));
-
-    let coin_data = match get_coin_data(mint_str).await {
-        Ok(data) => data,
-        Err(_) => {
-            eprintln!("Failed to retrieve coin data...");
-            return Err("Failed to retrieve coin data...".into());
-        }
-    };
 
     let private_key = std::env
         ::var("PRIVATE_KEY")
@@ -106,78 +100,88 @@ pub async fn pump_fun_buy(
         instructions.push(create_account_instruction);
     }
 
-    // Use u128 for large intermediate values
-    let sol_in_lamports = (sol_in * 1_000_000_000.0) as u128;
-    let token_out =
-        (sol_in_lamports * (coin_data.virtual_token_reserves as u128)) /
-        (coin_data.virtual_sol_reserves as u128);
+    for _ in 0..MAX_RETRIES {
+        println!("Prøver igen");
+        let coin_data = match get_coin_data(mint_str).await {
+            Ok(data) => data,
+            Err(_) => {
+                eprintln!("Failed to retrieve coin data...");
+                return Err("Failed to retrieve coin data...".into());
+            }
+        };
 
-    let sol_in_with_slippage = sol_in * (1.0 + slippage_decimal);
-    let max_sol_cost = (sol_in_with_slippage * 1_000_000_000.0) as u128;
+        let sol_in_lamports = (sol_in * 1_000_000_000.0) as u128;
+        let token_out =
+            (sol_in_lamports * (coin_data.virtual_token_reserves as u128)) /
+            (coin_data.virtual_sol_reserves as u128);
 
-    // Convert u128 to u64 safely
-    let token_out_u64: u64 = token_out.try_into().map_err(|_| "Overflow")?;
-    let max_sol_cost_u64: u64 = max_sol_cost.try_into().map_err(|_| "Overflow")?;
+        let sol_in_with_slippage = sol_in * (1.0 + slippage_decimal);
+        let max_sol_cost = (sol_in_with_slippage * 1_000_000_000.0) as u128;
 
-    let keys = vec![
-        AccountMeta::new_readonly(Pubkey::from_str(GLOBAL).unwrap(), false),
-        AccountMeta::new(Pubkey::from_str(FEE_RECIPIENT).unwrap(), false),
-        AccountMeta::new_readonly(mint, false),
-        AccountMeta::new(Pubkey::from_str(&coin_data.bonding_curve).unwrap(), false),
-        AccountMeta::new(Pubkey::from_str(&coin_data.associated_bonding_curve).unwrap(), false),
-        AccountMeta::new(token_account_address, false),
-        AccountMeta::new(owner, true),
-        AccountMeta::new_readonly(Pubkey::from_str(SYSTEM_PROGRAM_ID).unwrap(), false),
-        AccountMeta::new_readonly(Pubkey::from_str(TOKEN_PROGRAM_ID).unwrap(), false),
-        AccountMeta::new_readonly(Pubkey::from_str(RENT).unwrap(), false),
-        AccountMeta::new_readonly(Pubkey::from_str(PUMP_FUN_ACCOUNT).unwrap(), false),
-        AccountMeta::new_readonly(Pubkey::from_str(PUMP_FUN_PROGRAM).unwrap(), false)
-    ];
+        let token_out_u64: u64 = token_out.try_into().map_err(|_| "Overflow")?;
+        let max_sol_cost_u64: u64 = max_sol_cost.try_into().map_err(|_| "Overflow")?;
 
-    let buy: u64 = 16927863322537952870;
-    let mut data = vec![];
-    data.extend_from_slice(&buy.to_le_bytes());
-    data.extend_from_slice(&token_out_u64.to_le_bytes());
-    data.extend_from_slice(&max_sol_cost_u64.to_le_bytes());
+        let keys = vec![
+            AccountMeta::new_readonly(Pubkey::from_str(GLOBAL).unwrap(), false),
+            AccountMeta::new(Pubkey::from_str(FEE_RECIPIENT).unwrap(), false),
+            AccountMeta::new_readonly(mint, false),
+            AccountMeta::new(Pubkey::from_str(&coin_data.bonding_curve).unwrap(), false),
+            AccountMeta::new(Pubkey::from_str(&coin_data.associated_bonding_curve).unwrap(), false),
+            AccountMeta::new(token_account_address, false),
+            AccountMeta::new(owner, true),
+            AccountMeta::new_readonly(Pubkey::from_str(SYSTEM_PROGRAM_ID).unwrap(), false),
+            AccountMeta::new_readonly(Pubkey::from_str(TOKEN_PROGRAM_ID).unwrap(), false),
+            AccountMeta::new_readonly(Pubkey::from_str(RENT).unwrap(), false),
+            AccountMeta::new_readonly(Pubkey::from_str(PUMP_FUN_ACCOUNT).unwrap(), false),
+            AccountMeta::new_readonly(Pubkey::from_str(PUMP_FUN_PROGRAM).unwrap(), false)
+        ];
 
-    let instruction = Instruction {
-        program_id: Pubkey::from_str(PUMP_FUN_PROGRAM).unwrap(),
-        accounts: keys,
-        data,
-    };
+        let buy: u64 = 16927863322537952870;
+        let mut data = vec![];
+        data.extend_from_slice(&buy.to_le_bytes());
+        data.extend_from_slice(&token_out_u64.to_le_bytes());
+        data.extend_from_slice(&max_sol_cost_u64.to_le_bytes());
 
-    instructions.push(instruction);
+        let instruction = Instruction {
+            program_id: Pubkey::from_str(PUMP_FUN_PROGRAM).unwrap(),
+            accounts: keys,
+            data,
+        };
 
-    match create_transaction(instructions, payer).await {
-        Ok(tx) => {
-            println!("Transaction sent successfully: {}", tx);
+        instructions.push(instruction);
 
-            let key_z = TokenVaults {
-                base_vault: "".to_string(),
-                quote_vault: "".to_string(),
-                base_mint: mint_str.to_string(),
-                quote_mint: "So11111111111111111111111111111111111111112".to_string(),
-            };
+        match create_transaction(instructions.clone(), payer.insecure_clone()).await {
+            Ok(tx) => {
+                println!("Transaction sent successfully: {}", tx);
 
-            let saved_details = save_buy_details(
-                client,
-                &tx,
-                sol_in,
-                8,
-                mint_str,
-                key_z,
-                true
-            ).await;
-            Ok(tx)
-        }
-        Err(e) => {
-            eprintln!("Failed to create transaction...");
-            Err(e)
+                let key_z = TokenVaults {
+                    base_vault: "".to_string(),
+                    quote_vault: "".to_string(),
+                    base_mint: mint_str.to_string(),
+                    quote_mint: "So11111111111111111111111111111111111111112".to_string(),
+                };
+
+                let _saved_details = save_buy_details(
+                    client.clone(),
+                    &tx,
+                    8,
+                    mint_str,
+                    key_z,
+                    true
+                ).await;
+                return Ok(tx);
+            }
+            Err(e) => {
+                dbg!("Failed to send transaction: {:?}", e);
+                eprintln!("Failed to create transaction, retrying...");
+                instructions.clear(); // Clear instructions to recalculate in the next iteration
+            }
         }
     }
+
+    Err("Failed to create transaction after retries".into())
 }
 
-// Struct for CoinData
 #[derive(Deserialize)]
 struct CoinData {
     virtual_token_reserves: u64,
@@ -186,7 +190,6 @@ struct CoinData {
     associated_bonding_curve: String,
 }
 
-// Fetch coin data
 async fn get_coin_data(mint_str: &str) -> Result<CoinData, Box<dyn std::error::Error>> {
     let url = format!("https://frontend-api.pump.fun/coins/{}", mint_str);
     let client = reqwest::Client::new();

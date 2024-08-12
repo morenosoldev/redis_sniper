@@ -44,7 +44,7 @@ impl Helius {
         instructions: Vec<Instruction>,
         payer: Pubkey,
         lookup_tables: Vec<AddressLookupTableAccount>,
-        signers: &[&dyn Signer]
+        signers: Option<&[&dyn Signer]>
     ) -> Result<Option<u64>> {
         // Set the compute budget limit
         let test_instructions: Vec<Instruction> = vec![
@@ -66,15 +66,21 @@ impl Helius {
         )?;
         let versioned_message: VersionedMessage = VersionedMessage::V0(v0_message);
 
-        // Create a signed VersionedTransaction
-        let transaction: VersionedTransaction = VersionedTransaction::try_new(
-            versioned_message,
-            signers
-        ).map_err(|e| HeliusError::InvalidInput(format!("Signing error: {:?}", e)))?;
+        // Create a VersionedTransaction (signed or unsigned)
+        let transaction: VersionedTransaction = if let Some(signers) = signers {
+            VersionedTransaction::try_new(versioned_message, signers).map_err(|e|
+                HeliusError::InvalidInput(format!("Signing error: {:?}", e))
+            )?
+        } else {
+            VersionedTransaction {
+                signatures: vec![],
+                message: versioned_message,
+            }
+        };
 
         // Simulate the transaction
         let config: RpcSimulateTransactionConfig = RpcSimulateTransactionConfig {
-            sig_verify: true,
+            sig_verify: signers.is_some(),
             ..Default::default()
         };
         let result: Response<RpcSimulateTransactionResult> = self
@@ -93,7 +99,7 @@ impl Helius {
     /// The confirmed transaction signature or an error if the confirmation times out
     pub async fn poll_transaction_confirmation(&self, txt_sig: Signature) -> Result<Signature> {
         // 15 second timeout
-        let timeout: Duration = Duration::from_secs(30);
+        let timeout: Duration = Duration::from_secs(15);
         // 5 second retry interval
         let interval: Duration = Duration::from_secs(5);
         let start: Instant = Instant::now();
@@ -189,7 +195,7 @@ impl Helius {
             )?;
             let versioned_message: VersionedMessage = VersionedMessage::V0(v0_message);
 
-            let all_signers = if let Some(fee_payer) = config.fee_payer {
+            let all_signers: Vec<&dyn Signer> = if let Some(fee_payer) = config.fee_payer {
                 let mut all_signers: Vec<&dyn Signer> = config.signers.clone();
                 if !all_signers.iter().any(|signer| signer.pubkey() == fee_payer.pubkey()) {
                     all_signers.push(fee_payer);
@@ -263,32 +269,23 @@ impl Helius {
         updated_instructions.push(compute_budget_ix.clone());
         final_instructions.push(compute_budget_ix);
 
-        // Retry loop for compute units
-        const MAX_RETRIES: u8 = 3;
-        const RETRY_DELAY_MS: u64 = 2000; // 2 seconds
+        // Get the optimal compute units
+        let units: Option<u64> = self.get_compute_units(
+            updated_instructions,
+            payer_pubkey,
+            config.lookup_tables.clone().unwrap_or_default(),
+            Some(&config.signers)
+        ).await?;
 
-        let mut retries = 0;
-        let mut units: Option<u64> = None;
-
-        while retries < MAX_RETRIES {
-            units = self.get_compute_units(
-                updated_instructions.clone(),
-                payer_pubkey,
-                config.lookup_tables.clone().unwrap_or_default(),
-                &config.signers
-            ).await?;
-
-            if units.is_some() && units.unwrap() > 0 {
-                break;
-            }
-
-            retries += 1;
-            if retries < MAX_RETRIES {
-                tokio::time::sleep(Duration::from_millis(RETRY_DELAY_MS)).await;
-            }
+        if units == Some(0) {
+            return Err(
+                HeliusError::InvalidInput(
+                    "Error fetching compute units for the instructions provided".to_string()
+                )
+            );
         }
 
-        if units.is_none() || units.unwrap() == 0 {
+        if units.is_none() {
             return Err(
                 HeliusError::InvalidInput(
                     "Error fetching compute units for the instructions provided".to_string()
@@ -297,7 +294,7 @@ impl Helius {
         }
 
         let compute_units: u64 = units.unwrap();
-        println!("test cu {}", compute_units);
+        println!("{}", compute_units);
         let customers_cu: u32 = if compute_units < 1000 {
             1000
         } else {
@@ -395,8 +392,8 @@ impl Helius {
             self.connection().send_transaction_with_config(transaction, send_transaction_config)
         };
 
-        // Retry logic with a timeout of 35 seconds
-        let timeout: Duration = Duration::from_secs(35);
+        // Retry logic with a timeout of 30 seconds
+        let timeout: Duration = Duration::from_secs(30);
         let start_time: Instant = Instant::now();
 
         while
@@ -430,7 +427,7 @@ impl Helius {
 
         Err(HeliusError::Timeout {
             code: StatusCode::REQUEST_TIMEOUT,
-            text: "Transaction failed to confirm in 35s".to_string(),
+            text: "Transaction failed to confirm in 30s".to_string(),
         })
     }
 }

@@ -7,6 +7,8 @@ use solana_sdk::{
 };
 use super::sell;
 use solana_sdk::system_program;
+use super::mongo;
+use mongo::MongoHandler;
 use helius::types::*;
 use helius::Helius;
 use spl_associated_token_account::get_associated_token_address;
@@ -15,6 +17,7 @@ use std::str::FromStr;
 use serde::Deserialize;
 use reqwest::header::*;
 use sell::SellTransaction;
+use sell::find_sell_signature;
 
 use crate::sell::confirm::confirm_sell;
 
@@ -23,11 +26,8 @@ const FEE_RECIPIENT: &str = "CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM";
 const TOKEN_PROGRAM_ID: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 pub const EVENT_AUTHORITY: &str = "Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1";
 pub const TOKEN_PROGRAM: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
-const RENT: &str = "SysvarRent111111111111111111111111111111111";
 const PUMP_FUN_PROGRAM: &str = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
 pub const ASSOCIATED_TOKEN_PROGRAM: &str = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
-const PUMP_FUN_ACCOUNT: &str = "Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1";
-const SYSTEM_PROGRAM_ID: &str = "11111111111111111111111111111111";
 use std::error::Error;
 use solana_sdk::signature::Signature;
 use solana_sdk::instruction::Instruction as SolanaInstruction;
@@ -54,19 +54,19 @@ async fn create_transaction(
             skip_preflight: true,
             preflight_commitment: None,
             encoding: None,
-            max_retries: Some(4),
+            max_retries: None,
             min_context_slot: None,
         },
     };
 
-    match helius.send_smart_transaction(config).await {
+    match helius.send_smart_transaction_with_tip(config, Some(10000), Some("Amsterdam")).await {
         Ok(signature) => {
-            dbg!("Transaction sent successfully: {}", signature);
-            Ok(signature)
+            dbg!("Transaction sent successfully: {}", &signature);
+            return Ok(signature);
         }
         Err(e) => {
-            dbg!("Failed to send transaction: {:?}", &e);
-            Err(Box::new(e)) // Convert the error to a boxed dynamic error
+            dbg!("Failed to send transaction on attempt {:?}", &e);
+            return Err(Box::new(e)); // Return the error after the last retry
         }
     }
 }
@@ -85,13 +85,9 @@ pub async fn pump_fun_sell(
         CommitmentConfig::confirmed()
     );
 
-    let coin_data = match get_coin_data(mint_str).await {
-        Ok(data) => data,
-        Err(_) => {
-            eprintln!("Failed to retrieve coin data...");
-            return Err("Failed to retrieve coin data...".into());
-        }
-    };
+    let mongo_handler = MongoHandler::new().await.map_err(|err| {
+        format!("Error creating MongoDB handler: {:?}", err)
+    })?;
 
     let private_key = std::env
         ::var("PRIVATE_KEY")
@@ -104,6 +100,54 @@ pub async fn pump_fun_sell(
 
     let token_account_address = get_associated_token_address(&owner, &mint);
 
+    let token_balance_result = connection.get_token_account_balance(&token_account_address);
+
+    if let Ok(token_balance) = token_balance_result {
+        // Define a larger epsilon value to consider balances like 0.247686 as effectively zero
+        let epsilon = 1.0; // Adjusted to consider balances <= 1.0 as zero
+
+        // Retrieve the balance and apply rounding
+        let balance = token_balance.ui_amount.unwrap_or(0.0);
+        let rounded_balance = (balance * 1000000.0).round() / 1000000.0; // Rounds to 6 decimal places
+
+        println!("Token balance: {:?}", rounded_balance);
+        println!("Token amount: {:?}", token_amount as f64);
+
+        // Check if the rounded balance is less than or equal to epsilon
+        if rounded_balance <= epsilon {
+            eprintln!("Insufficient token balance: {:?}", rounded_balance);
+
+            // Here we handle the case where the balance is not effectively zero
+            // Proceed to check if the token is already sold
+            match mongo_handler.is_token_sold("solsniper", "tokens", &sell_transaction.mint).await {
+                Ok(true) => {
+                    eprintln!("Token already sold. Exiting...");
+                    return Err("Token already sold".into());
+                }
+                Ok(false) => {
+                    let signature = find_sell_signature(&sell_transaction.mint).await?;
+                    println!("Token not sold. Finder signature now proceeding.");
+
+                    if let Err(err) = confirm_sell(&signature, sell_transaction, None).await {
+                        eprintln!("Error in confirm_sell: {:?}", err);
+                        return Err(err.into());
+                    }
+                    return Ok(signature);
+                }
+                Err(err) => {
+                    eprintln!("Error checking if token is sold: {:?}", err);
+                    return Err(err.into());
+                }
+            }
+        } else {
+            println!("Balance is sufficient, proceeding with the operation.");
+        }
+    } else {
+        // Handle the case where fetching the token balance fails
+        eprintln!("Failed to fetch token balance.");
+        return Err("Failed to fetch token balance".into());
+    }
+
     if connection.get_account(&token_account_address).is_err() {
         let create_account_instruction = create_associated_token_account(
             &payer.pubkey(),
@@ -114,65 +158,78 @@ pub async fn pump_fun_sell(
         instructions.push(create_account_instruction);
     }
 
-    let virtual_token_reserves = coin_data.virtual_token_reserves as u128;
-    let virtual_sol_reserves = coin_data.virtual_sol_reserves as u128;
-    let token_amount = token_amount as u128;
+    let max_retries = 4;
+    for _ in 0..max_retries {
+        let coin_data = match get_coin_data(mint_str).await {
+            Ok(data) => data,
+            Err(_) => {
+                eprintln!("Failed to retrieve coin data...");
+                return Err("Failed to retrieve coin data...".into());
+            }
+        };
 
-    // Calculate SOL output with u128
-    let sol_out = (token_amount * virtual_sol_reserves) / virtual_token_reserves;
+        let virtual_token_reserves = coin_data.virtual_token_reserves as u128;
+        let virtual_sol_reserves = coin_data.virtual_sol_reserves as u128;
+        let token_amount = token_amount as u128;
 
-    // Calculate minimum SOL received with slippage using integer arithmetic
-    let slippage_multiplier = 1_000_000_000u128 + ((slippage_decimal * 1_000_000_000.0) as u128);
-    let min_sol_received = (sol_out * slippage_multiplier) / 1_000_000_000;
+        // Calculate SOL output with u128
+        let sol_out = (token_amount * virtual_sol_reserves) / virtual_token_reserves;
 
-    // Convert back to u64 safely
-    let sol_out_u64: u64 = sol_out.try_into().map_err(|_| "Overflow")?;
-    let min_sol_received_u64: u64 = min_sol_received.try_into().map_err(|_| "Overflow")?;
+        // Calculate minimum SOL received with slippage using integer arithmetic
+        let slippage_multiplier =
+            1_000_000_000u128 + ((slippage_decimal * 1_000_000_000.0) as u128);
+        let min_sol_received = (sol_out * slippage_multiplier) / 1_000_000_000;
 
-    let sol_out_f64 = (sol_out as f64) / 1_000_000_000.0;
-    dbg!(sol_out_f64);
+        // Convert back to u64 safely
+        //let sol_out_u64: u64 = sol_out.try_into().map_err(|_| "Overflow")?;
+        let min_sol_received_u64: u64 = min_sol_received.try_into().map_err(|_| "Overflow")?;
 
-    let keys = vec![
-        AccountMeta::new_readonly(Pubkey::from_str(GLOBAL).unwrap(), false),
-        AccountMeta::new(Pubkey::from_str(FEE_RECIPIENT).unwrap(), false),
-        AccountMeta::new_readonly(mint, false),
-        AccountMeta::new(Pubkey::from_str(&coin_data.bonding_curve).unwrap(), false),
-        AccountMeta::new(Pubkey::from_str(&coin_data.associated_bonding_curve).unwrap(), false),
-        AccountMeta::new(token_account_address, false),
-        AccountMeta::new(owner, true),
-        AccountMeta::new_readonly(system_program::ID, false),
-        AccountMeta::new_readonly(Pubkey::from_str(ASSOCIATED_TOKEN_PROGRAM)?, false),
-        AccountMeta::new_readonly(Pubkey::from_str(TOKEN_PROGRAM)?, false),
-        AccountMeta::new_readonly(Pubkey::from_str(EVENT_AUTHORITY)?, false),
-        AccountMeta::new_readonly(Pubkey::from_str(PUMP_FUN_PROGRAM)?, false)
-    ];
+        let sol_out_f64 = (sol_out as f64) / 1_000_000_000.0;
+        dbg!(sol_out_f64);
 
-    let sell: u64 = 12502976635542562355; // Replace with your specific instruction data
-    let mut data = vec![];
-    data.extend_from_slice(&sell.to_le_bytes());
-    data.extend_from_slice(&token_amount.to_le_bytes());
-    data.extend_from_slice(&min_sol_received_u64.to_le_bytes());
+        let keys = vec![
+            AccountMeta::new_readonly(Pubkey::from_str(GLOBAL).unwrap(), false),
+            AccountMeta::new(Pubkey::from_str(FEE_RECIPIENT).unwrap(), false),
+            AccountMeta::new_readonly(mint, false),
+            AccountMeta::new(Pubkey::from_str(&coin_data.bonding_curve).unwrap(), false),
+            AccountMeta::new(Pubkey::from_str(&coin_data.associated_bonding_curve).unwrap(), false),
+            AccountMeta::new(token_account_address, false),
+            AccountMeta::new(owner, true),
+            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(Pubkey::from_str(ASSOCIATED_TOKEN_PROGRAM)?, false),
+            AccountMeta::new_readonly(Pubkey::from_str(TOKEN_PROGRAM)?, false),
+            AccountMeta::new_readonly(Pubkey::from_str(EVENT_AUTHORITY)?, false),
+            AccountMeta::new_readonly(Pubkey::from_str(PUMP_FUN_PROGRAM)?, false)
+        ];
 
-    let instruction = Instruction {
-        program_id: Pubkey::from_str(PUMP_FUN_PROGRAM).unwrap(),
-        accounts: keys,
-        data,
-    };
+        let sell: u64 = 12502976635542562355; // Replace with your specific instruction data
+        let mut data = vec![];
+        data.extend_from_slice(&sell.to_le_bytes());
+        data.extend_from_slice(&token_amount.to_le_bytes());
+        data.extend_from_slice(&min_sol_received_u64.to_le_bytes());
 
-    instructions.push(instruction);
+        let instruction = Instruction {
+            program_id: Pubkey::from_str(PUMP_FUN_PROGRAM).unwrap(),
+            accounts: keys,
+            data,
+        };
 
-    match create_transaction(instructions, payer).await {
-        Ok(tx) => {
-            println!("Transaction sent successfully: {}", tx);
-            confirm_sell(&tx, sell_transaction, Some(sol_out_f64)).await?;
+        instructions.push(instruction);
 
-            Ok(tx)
-        }
-        Err(e) => {
-            eprintln!("Failed to create transaction...");
-            Err(e)
+        match create_transaction(instructions.clone(), payer.insecure_clone()).await {
+            Ok(tx) => {
+                println!("Transaction sent successfully: {}", tx);
+                confirm_sell(&tx, sell_transaction, Some(sol_out_f64)).await?;
+                return Ok(tx);
+            }
+            Err(e) => {
+                eprintln!("Error sending transaction: {:?}", e);
+                instructions.clear(); // Clear instructions to recalculate in the next iteration
+            }
         }
     }
+
+    Err("Failed to create transaction after retries".into())
 }
 
 // Struct for CoinData

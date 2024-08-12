@@ -1,11 +1,10 @@
 mod sell;
 mod buy;
-
 use redis::RedisResult;
 use futures_util::StreamExt;
 use serde::{ Serialize, Deserialize };
 use dotenv::dotenv;
-use buy::raydium_sdk::{ LiquidityPoolKeys, LiquidityPoolKeysString };
+use buy::raydium_sdk::LiquidityPoolKeysString;
 use buy::pump::pump_fun_buy;
 use tokio::time::{ sleep, Duration };
 use std::time::Instant;
@@ -81,7 +80,7 @@ async fn handle_trade_message(payload: String) {
                         // Treat as pump token
                         dbg!("Running pump_fun_buy");
                         let mint_str = &tx.in_token;
-                        let slippage_decimal = 10.0; // Update as necessary
+                        let slippage_decimal = 15.0; // Update as necessary
 
                         match pump_fun_buy(mint_str, tx.amount_in, slippage_decimal).await {
                             Ok(_) => {

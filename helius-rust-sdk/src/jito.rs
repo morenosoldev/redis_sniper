@@ -4,24 +4,32 @@
 /// This module allows the creation and sending of smart transactions with Jito tips.
 /// It includes methods to add tips to transactions, create smart transactions with tips, and
 /// send these smart transactions as bundles. Additionally, it provides the ability to check
-/// the status of sent bundles  
-use crate::error::{HeliusError, Result};
+/// the status of sent bundles
+use crate::error::{ HeliusError, Result };
 use crate::types::{
-    BasicRequest, CreateSmartTransactionConfig, GetPriorityFeeEstimateOptions, GetPriorityFeeEstimateRequest,
-    GetPriorityFeeEstimateResponse, SmartTransaction, SmartTransactionConfig,
+    BasicRequest,
+    CreateSmartTransactionConfig,
+    GetPriorityFeeEstimateOptions,
+    GetPriorityFeeEstimateRequest,
+    GetPriorityFeeEstimateResponse,
+    SmartTransaction,
+    SmartTransactionConfig,
 };
 use crate::Helius;
-
-use bincode::{serialize, ErrorKind};
+use crate::polling::poll_transaction;
+use std::sync::Arc;
+use bincode::{ serialize, ErrorKind };
 use chrono::format::parse;
 use phf::phf_map;
 use rand::seq::SliceRandom;
-use reqwest::{Method, StatusCode, Url};
+use reqwest::{ Method, StatusCode, Url };
 use serde::Serialize;
 use serde_json::Value;
-use solana_client::rpc_config::{RpcSendTransactionConfig, RpcSimulateTransactionConfig};
-use solana_client::rpc_response::{Response, RpcSimulateTransactionResult};
+use solana_client::rpc_config::{ RpcSendTransactionConfig, RpcSimulateTransactionConfig };
+use solana_client::rpc_response::{ Response, RpcSimulateTransactionResult };
 use solana_sdk::system_instruction;
+use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_client::nonblocking::pubsub_client::PubsubClient;
 use solana_sdk::{
     address_lookup_table::AddressLookupTableAccount,
     bs58::encode,
@@ -29,14 +37,14 @@ use solana_sdk::{
     compute_budget::ComputeBudgetInstruction,
     hash::Hash,
     instruction::Instruction,
-    message::{v0, VersionedMessage},
+    message::{ v0, VersionedMessage },
     pubkey::Pubkey,
-    signature::{Signature, Signer},
-    transaction::{Transaction, VersionedTransaction},
+    signature::{ Signature, Signer },
+    transaction::{ Transaction, VersionedTransaction },
 };
 use std::str::FromStr;
-use std::time::{Duration, Instant};
-use tokio::time::{sleep, timeout_at};
+use std::time::{ Duration, Instant };
+use tokio::time::{ sleep, timeout_at };
 
 /// Jito tip accounts
 pub const JITO_TIP_ACCOUNTS: [&str; 8] = [
@@ -51,7 +59,10 @@ pub const JITO_TIP_ACCOUNTS: [&str; 8] = [
 ];
 
 /// Jito API URLs for different regions
-pub static JITO_API_URLS: phf::Map<&'static str, &'static str> = phf_map! {
+pub static JITO_API_URLS: phf::Map<
+    &'static str,
+    &'static str
+> = phf_map! {
     "Default" => "https://mainnet.block-engine.jito.wtf",
     "NY" => "https://ny.mainnet.block-engine.jito.wtf",
     "Amsterdam" => "https://amsterdam.mainnet.block-engine.jito.wtf",
@@ -75,10 +86,13 @@ impl Helius {
         instructions: &mut Vec<Instruction>,
         fee_payer: Pubkey,
         tip_account: &str,
-        tip_amount: u64,
+        tip_amount: u64
     ) {
-        let tip_instruction: Instruction =
-            system_instruction::transfer(&fee_payer, &Pubkey::from_str(tip_account).unwrap(), tip_amount);
+        let tip_instruction: Instruction = system_instruction::transfer(
+            &fee_payer,
+            &Pubkey::from_str(tip_account).unwrap(),
+            tip_amount
+        );
         instructions.push(tip_instruction);
     }
 
@@ -93,34 +107,55 @@ impl Helius {
     pub async fn create_smart_transaction_with_tip(
         &self,
         mut config: CreateSmartTransactionConfig<'_>,
-        tip_amount: Option<u64>,
-    ) -> Result<(String, u64)> {
+        tip_amount: Option<u64>
+    ) -> Result<(String, u64, Signature)> {
         if config.signers.is_empty() {
-            return Err(HeliusError::InvalidInput(
-                "The transaction must have at least one signer".to_string(),
-            ));
+            return Err(
+                HeliusError::InvalidInput(
+                    "The transaction must have at least one signer".to_string()
+                )
+            );
         }
 
         let tip_amount: u64 = tip_amount.unwrap_or(1000);
         let random_tip_account: &str = *JITO_TIP_ACCOUNTS.choose(&mut rand::thread_rng()).unwrap();
-        let payer_key: Pubkey = config
-            .fee_payer
-            .map_or_else(|| config.signers[0].pubkey(), |signer| signer.pubkey());
+        let payer_key: Pubkey = config.fee_payer.map_or_else(
+            || config.signers[0].pubkey(),
+            |signer| signer.pubkey()
+        );
 
-        self.add_tip_instruction(&mut config.instructions, payer_key, random_tip_account, tip_amount);
+        self.add_tip_instruction(
+            &mut config.instructions,
+            payer_key,
+            random_tip_account,
+            tip_amount
+        );
 
-        let (smart_transaction, last_valid_block_height) = self.create_smart_transaction(&config).await?;
+        let (smart_transaction, last_valid_block_height) = self.create_smart_transaction(
+            &config
+        ).await?;
+
+        let signature = match &smart_transaction {
+            SmartTransaction::Legacy(tx) => tx.signatures[0], // Extract the first signature
+            SmartTransaction::Versioned(tx) => tx.signatures[0], // For versioned transactions, if applicable
+        };
+        println!("SIGNATURE: {:?}", signature);
+
         let serialized_transaction: Vec<u8> = match smart_transaction {
             SmartTransaction::Legacy(tx) => {
-                serialize(&tx).map_err(|e: Box<ErrorKind>| HeliusError::InvalidInput(e.to_string()))?
+                serialize(&tx).map_err(|e: Box<ErrorKind>|
+                    HeliusError::InvalidInput(e.to_string())
+                )?
             }
             SmartTransaction::Versioned(tx) => {
-                serialize(&tx).map_err(|e: Box<ErrorKind>| HeliusError::InvalidInput(e.to_string()))?
+                serialize(&tx).map_err(|e: Box<ErrorKind>|
+                    HeliusError::InvalidInput(e.to_string())
+                )?
             }
         };
         let transaction_base58: String = encode(&serialized_transaction).into_string();
 
-        Ok((transaction_base58, last_valid_block_height))
+        Ok((transaction_base58, last_valid_block_height, signature))
     }
 
     /// Sends a bundle of transactions to the Jito Block Engine
@@ -131,7 +166,11 @@ impl Helius {
     ///
     /// # Returns
     /// A `Result` containing the bundle ID
-    pub async fn send_jito_bundle(&self, serialized_transactions: Vec<String>, jito_api_url: &str) -> Result<String> {
+    pub async fn send_jito_bundle(
+        &self,
+        serialized_transactions: Vec<String>,
+        jito_api_url: &str
+    ) -> Result<String> {
         let request: BasicRequest = BasicRequest {
             jsonrpc: "2.0".to_string(),
             id: 1,
@@ -141,11 +180,13 @@ impl Helius {
 
         let parsed_url: Url = Url::parse(jito_api_url).expect("Failed to parse URL");
 
-        let response: Value = self
-            .rpc_client
-            .handler
-            .send(Method::POST, parsed_url, Some(&request))
-            .await?;
+        let response: Value = self.rpc_client.handler.send(
+            Method::POST,
+            parsed_url,
+            Some(&request)
+        ).await?;
+
+        println!("Response: {:?}", response);
 
         if let Some(error) = response.get("error") {
             return Err(HeliusError::BadRequest {
@@ -174,31 +215,28 @@ impl Helius {
     ///
     /// # Returns
     /// A `Result` containing the status of the bundles as a `serde_json::Value`
-    pub async fn get_bundle_statuses(&self, bundle_ids: Vec<String>, jito_api_url: &str) -> Result<Value> {
-        let request: BasicRequest = BasicRequest {
-            jsonrpc: "2.0".to_string(),
-            id: 1,
-            method: "getBundleStatuses".to_string(),
-            params: vec![bundle_ids],
+    pub async fn get_bundle_statuses(&self, signature: Signature) -> Result<(Signature, bool)> {
+        let rpc_client = Arc::new(
+            RpcClient::new(
+                "https://mainnet.helius-rpc.com/?api-key=3dda5cb1-79ed-4c15-9b3f-5635dde06630".to_string()
+            )
+        );
+        let pubsub_client: PubsubClient = match
+            PubsubClient::new(
+                &"wss://mainnet.helius-rpc.com/?api-key=3dda5cb1-79ed-4c15-9b3f-5635dde06630"
+            ).await
+        {
+            Ok(client) => client,
+            Err(e) => {
+                return Err(HeliusError::Unknown {
+                    code: StatusCode::INTERNAL_SERVER_ERROR,
+                    text: format!("Failed to create PubsubClient: {:?}", e),
+                });
+            }
         };
-
-        let parsed_url: Url = Url::parse(jito_api_url).expect("Failed to parse URL");
-
-        let response: Value = self
-            .rpc_client
-            .handler
-            .send(Method::POST, parsed_url, Some(&request))
-            .await?;
-
-        if let Some(error) = response.get("error") {
-            return Err(HeliusError::BadRequest {
-                path: jito_api_url.to_string(),
-                text: format!("Error getting bundle statuses: {:?}", error),
-            });
-        }
-
+        let confirmed = poll_transaction(rpc_client, pubsub_client, signature).await;
         // Return the response value
-        Ok(response)
+        Ok((signature, confirmed.unwrap()))
     }
 
     /// Sends a smart transaction as a Jito bundle with a tip
@@ -214,51 +252,55 @@ impl Helius {
         &self,
         config: SmartTransactionConfig<'_>,
         tip_amount: Option<u64>,
-        region: Option<JitoRegion>,
-    ) -> Result<String> {
+        region: Option<JitoRegion>
+    ) -> Result<Signature> {
         if config.create_config.signers.is_empty() {
-            return Err(HeliusError::InvalidInput(
-                "The transaction must have at least one signer".to_string(),
-            ));
+            return Err(
+                HeliusError::InvalidInput(
+                    "The transaction must have at least one signer".to_string()
+                )
+            );
         }
 
         let tip: u64 = tip_amount.unwrap_or(1000);
         let user_provided_region: &str = region.unwrap_or("Default");
-        let jito_region: &str = *JITO_API_URLS
-            .get(user_provided_region)
-            .ok_or_else(|| HeliusError::InvalidInput("Invalid Jito region".to_string()))?;
+        let jito_region: &str = *JITO_API_URLS.get(user_provided_region).ok_or_else(||
+            HeliusError::InvalidInput("Invalid Jito region".to_string())
+        )?;
         let jito_api_url_string: String = format!("{}/api/v1/bundles", jito_region);
         let jito_api_url: &str = jito_api_url_string.as_str();
 
         // Create the smart transaction with tip
-        let (serialized_transaction, last_valid_block_height) = self
-            .create_smart_transaction_with_tip(config.create_config, Some(tip))
-            .await?;
+        let (serialized_transaction, last_valid_block_height, signature) =
+            self.create_smart_transaction_with_tip(config.create_config, Some(tip)).await?;
 
+        println!("Serialized transaction: {:?}", serialized_transaction);
         // Send the transaction as a Jito bundle
-        let bundle_id: String = self
-            .send_jito_bundle(vec![serialized_transaction], jito_api_url)
-            .await?;
+        let _bundle_id: String = self.send_jito_bundle(
+            vec![serialized_transaction],
+            jito_api_url
+        ).await?;
 
         // Poll for confirmation status
-        let timeout: Duration = Duration::from_secs(60);
-        let interval: Duration = Duration::from_secs(5);
+        let timeout: Duration = Duration::from_secs(30);
         let start: tokio::time::Instant = tokio::time::Instant::now();
 
-        while start.elapsed() < timeout || self.connection().get_block_height()? <= last_valid_block_height {
-            let bundle_statuses: Value = self.get_bundle_statuses(vec![bundle_id.clone()], jito_api_url).await?;
+        while
+            start.elapsed() < timeout &&
+            self.connection().get_block_height()? <= last_valid_block_height
+        {
+            let (returned_signature, confirmed) = self.get_bundle_statuses(
+                signature.clone()
+            ).await?;
 
-            if let Some(values) = bundle_statuses["result"]["value"].as_array() {
-                if !values.is_empty() {
-                    if let Some(status) = values[0]["confirmation_status"].as_str() {
-                        if status == "confirmed" {
-                            return Ok(values[0]["transactions"][0].as_str().unwrap().to_string());
-                        }
-                    }
-                }
+            if confirmed {
+                return Ok(returned_signature); // Return the bundle ID on success
+            } else {
+                return Err(HeliusError::Timeout {
+                    code: StatusCode::REQUEST_TIMEOUT,
+                    text: "Bundle failed to confirm within the timeout period".to_string(),
+                });
             }
-
-            sleep(interval).await;
         }
 
         Err(HeliusError::Timeout {
