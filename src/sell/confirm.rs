@@ -3,6 +3,7 @@ use super::sell::SellTransaction;
 use super::price;
 use super::utils;
 use mongo::{ MongoHandler, SellTransaction as SellTransactionMongo, TokenInfo };
+use redis::{ Commands, RedisResult };
 use solana_client::nonblocking::rpc_client::RpcClient;
 use std::sync::Arc;
 use std::time::Duration;
@@ -122,6 +123,8 @@ pub async fn confirm_sell(
                     created_at: DateTime::now(),
                 };
 
+                decrease_buy_counter().await?;
+
                 mongo_handler.store_sell_transaction_info(
                     sell_transaction_mongo,
                     "solsniper",
@@ -142,4 +145,21 @@ pub async fn confirm_sell(
     } else {
         return Err("Transaction not confirmed after 3 retries".into());
     }
+}
+
+pub async fn decrease_buy_counter() -> RedisResult<()> {
+    let redis_url = std::env
+        ::var("REDIS_URL")
+        .expect("You must set the REDIS_URL environment variable");
+
+    let client = redis::Client::open(redis_url.clone()).expect("Failed to create Redis client");
+
+    let mut con = client.get_connection().expect("Failed to connect to Redis");
+
+    // Specify that we expect the result to be of type i32 (or i64 if your values might be large)
+    let _: i32 = con
+        .decr("buy_transaction_count", 1)
+        .expect("Failed to decrement buy_transaction_count");
+
+    Ok(())
 }

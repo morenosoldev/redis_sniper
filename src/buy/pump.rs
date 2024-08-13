@@ -28,7 +28,7 @@ const PUMP_FUN_PROGRAM: &str = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
 const PUMP_FUN_ACCOUNT: &str = "Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1";
 const SYSTEM_PROGRAM_ID: &str = "11111111111111111111111111111111";
 
-const MAX_RETRIES: usize = 3;
+const MAX_RETRIES: usize = 2;
 
 async fn create_transaction(
     instructions: Vec<SolanaInstruction>,
