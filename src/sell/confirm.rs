@@ -156,10 +156,16 @@ pub async fn decrease_buy_counter() -> RedisResult<()> {
 
     let mut con = client.get_connection().expect("Failed to connect to Redis");
 
-    // Specify that we expect the result to be of type i32 (or i64 if your values might be large)
-    let _: i32 = con
-        .decr("buy_transaction_count", 1)
-        .expect("Failed to decrement buy_transaction_count");
+    // Get the current value of buy_transaction_count
+    let current_count: i32 = con.get("buy_transaction_count").unwrap_or(0);
+
+    // Calculate the new value by subtracting 1
+    let new_count = current_count - 1;
+
+    // Set the new value back to Redis
+    let _: () = con
+        .set("buy_transaction_count", new_count)
+        .expect("Failed to set buy_transaction_count");
 
     Ok(())
 }
