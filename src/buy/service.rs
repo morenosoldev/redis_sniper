@@ -14,6 +14,7 @@ use mongodb::bson::DateTime;
 use std::error::Error;
 use std::sync::Arc;
 use std::time::Duration;
+use redis::{ Commands, RedisResult };
 
 #[derive(Debug, Clone)]
 pub struct TokenVaults {
@@ -174,6 +175,8 @@ pub async fn save_buy_details(
                         eprintln!("Error storing transaction info: {:?}", e);
                     }
 
+                    increase_buy_counter().await?;
+
                     if
                         let Err(e) = mongo_handler.store_token(
                             token_metadata,
@@ -203,4 +206,29 @@ pub async fn save_buy_details(
     }
 
     Err("Failed to get transaction details after maximum retries".into())
+}
+
+pub async fn increase_buy_counter() -> RedisResult<()> {
+    let redis_url = std::env
+        ::var("REDIS_URL")
+        .expect("You must set the REDIS_URL environment variable");
+
+    let client = redis::Client::open(redis_url.clone()).expect("Failed to create Redis client");
+
+    let mut con = client.get_connection().expect("Failed to connect to Redis");
+
+    // Get the current value of buy_transaction_count
+    let current_count: i32 = con.get("buy_transaction_count").unwrap_or(0);
+    println!("Current count: {}", current_count);
+
+    // Calculate the new value by subtracting 1
+    let new_count = current_count + 1;
+    println!("New count: {}", new_count);
+
+    // Set the new value back to Redis
+    let _: () = con
+        .set("buy_transaction_count", new_count)
+        .expect("Failed to set buy_transaction_count");
+
+    Ok(())
 }
