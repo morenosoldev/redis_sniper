@@ -160,8 +160,8 @@ pub async fn decrease_buy_counter() -> RedisResult<()> {
     let current_count: i32 = con.get("buy_transaction_count").unwrap_or(0);
     println!("Current count: {}", current_count);
 
-    // Calculate the new value by subtracting 1
-    let new_count = current_count - 1;
+    // Calculate the new value, ensuring it doesn't go below zero
+    let new_count = if current_count > 0 { current_count - 1 } else { 0 };
     println!("New count: {}", new_count);
 
     // Set the new value back to Redis
