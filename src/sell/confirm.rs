@@ -104,6 +104,7 @@ pub async fn confirm_sell(
                     !trade_state.stop_loss_triggered &&
                     !trade_state.stop_loss_at_breakeven
                 {
+                    println!("Initial investment taken");
                     trade_state.initial_investment_taken = true;
                     trade_state.last_profit_taking_time = Some(Utc::now().into());
                 }
