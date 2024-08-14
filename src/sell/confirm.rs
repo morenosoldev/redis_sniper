@@ -95,6 +95,8 @@ pub async fn confirm_sell(
                         "solsniper",
                         "tokens"
                     ).await?;
+
+                    decrease_buy_counter().await?;
                 }
 
                 if
@@ -132,8 +134,6 @@ pub async fn confirm_sell(
                     profit_percentage: profit_percentage_value,
                     created_at: DateTime::now(),
                 };
-
-                decrease_buy_counter().await?;
 
                 mongo_handler.store_sell_transaction_info(
                     sell_transaction_mongo,
