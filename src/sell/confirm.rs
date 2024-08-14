@@ -96,6 +96,14 @@ pub async fn confirm_sell(
                     ).await?;
                 }
 
+                if !trade_state.initial_investment_taken {
+                    trade_state.initial_investment_taken = true;
+                    trade_state.last_profit_taking_time = Some(Utc::now().into());
+                    trade_state.last_profit_percentage = profit_percentage;
+                    trade_state.initial_investment = sol_amount;
+                    trade_state.remaining = sol_amount;
+                }
+
                 trade_state.taken_out += sol_amount;
                 trade_state.remaining -= 0.0;
 
