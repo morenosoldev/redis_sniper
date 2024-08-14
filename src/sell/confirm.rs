@@ -102,7 +102,7 @@ pub async fn confirm_sell(
                 if
                     !trade_state.initial_investment_taken &&
                     !trade_state.stop_loss_triggered &&
-                    !trade_state.stop_loss_at_breakeven
+                    trade_state.stop_loss_at_breakeven
                 {
                     println!("Initial investment taken");
                     trade_state.initial_investment_taken = true;
