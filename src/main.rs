@@ -61,6 +61,7 @@ async fn handle_trade_message(payload: String) {
 
                     if let Ok(Some(buy_pool)) = buy_pool_result {
                         // Proceed with the buy swap
+                        /*
                         match buy::buy::buy_swap(buy_pool, tx.lp_decimals, tx.amount_in).await {
                             Ok(result) => {
                                 let elapsed = start_time.elapsed();
@@ -73,7 +74,9 @@ async fn handle_trade_message(payload: String) {
                             Err(err) => {
                                 eprintln!("Buy swap error: {:?}", err);
                             }
-                        }
+                        }    
+                         */
+
                     } else {
                         // Treat as pump token
                         dbg!("Running pump_fun_buy");

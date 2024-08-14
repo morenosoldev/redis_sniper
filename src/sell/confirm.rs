@@ -89,7 +89,7 @@ pub async fn confirm_sell(
                 buy_transaction.amount = buy_transaction.amount - (sell_transaction.amount as f64);
                 mongo_handler.update_buy_transaction(&buy_transaction).await?;
 
-                if buy_transaction.amount == 0.0 {
+                if buy_transaction.amount <= 100.0 {
                     mongo_handler.update_token_metadata_sold_field(
                         &sell_transaction.mint,
                         "solsniper",
