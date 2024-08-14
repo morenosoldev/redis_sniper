@@ -215,7 +215,11 @@ impl Helius {
     ///
     /// # Returns
     /// A `Result` containing the status of the bundles as a `serde_json::Value`
-    pub async fn get_bundle_statuses(&self, signature: Signature) -> Result<(Signature, bool)> {
+    pub async fn get_bundle_statuses(
+        &self,
+        signature: Signature,
+        last_valid_block_height: u64
+    ) -> Result<(Signature, bool)> {
         let rpc_client = Arc::new(
             RpcClient::new(
                 "https://mainnet.helius-rpc.com/?api-key=3dda5cb1-79ed-4c15-9b3f-5635dde06630".to_string()
@@ -234,7 +238,12 @@ impl Helius {
                 });
             }
         };
-        let confirmed = poll_transaction(rpc_client, pubsub_client, signature).await;
+        let confirmed = poll_transaction(
+            rpc_client,
+            pubsub_client,
+            signature,
+            last_valid_block_height
+        ).await;
         // Return the response value
         Ok((signature, confirmed.unwrap()))
     }
@@ -285,12 +294,10 @@ impl Helius {
         let timeout: Duration = Duration::from_secs(30);
         let start: tokio::time::Instant = tokio::time::Instant::now();
 
-        while
-            start.elapsed() < timeout &&
-            self.connection().get_block_height()? <= last_valid_block_height
-        {
+        while start.elapsed() < timeout {
             let (returned_signature, confirmed) = self.get_bundle_statuses(
-                signature.clone()
+                signature.clone(),
+                last_valid_block_height
             ).await?;
 
             if confirmed {
