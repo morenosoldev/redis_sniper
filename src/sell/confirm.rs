@@ -17,6 +17,7 @@ use solana_client::rpc_config::RpcTransactionConfig;
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
 use std::str::FromStr;
+use chrono::Utc;
 
 pub async fn confirm_sell(
     signature: &Signature,
@@ -96,12 +97,13 @@ pub async fn confirm_sell(
                     ).await?;
                 }
 
-                if !trade_state.initial_investment_taken {
+                if
+                    !trade_state.initial_investment_taken &&
+                    !trade_state.stop_loss_triggered &&
+                    !trade_state.stop_loss_at_breakeven
+                {
                     trade_state.initial_investment_taken = true;
                     trade_state.last_profit_taking_time = Some(Utc::now().into());
-                    trade_state.last_profit_percentage = profit_percentage;
-                    trade_state.initial_investment = sol_amount;
-                    trade_state.remaining = sol_amount;
                 }
 
                 trade_state.taken_out += sol_amount;
