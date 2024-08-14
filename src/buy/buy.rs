@@ -349,7 +349,7 @@ pub async fn buy_swap(
                             .unwrap();
 
                         if token_balance == 0 {
-                            slippage = 5.0;
+                            slippage = 8.0;
                             continue;
                         } else {
                             return Err(SwapError::TransactionError(e.to_string()));

@@ -18,7 +18,7 @@ pub async fn poll_transaction(
     let mut checked_sent = false;
 
     loop {
-        match timeout(Duration::from_secs(50), stream.next()).await {
+        match timeout(Duration::from_secs(33), stream.next()).await {
             Ok(Some(response)) => {
                 let value: RpcSignatureResult = response.value;
 
