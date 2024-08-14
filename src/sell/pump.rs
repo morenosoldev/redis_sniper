@@ -208,7 +208,7 @@ pub async fn pump_fun_sell(
                 confirm_sell(&tx, sell_transaction, Some(sol_out_f64)).await?;
                 return Ok(tx);
             }
-            Err(e) => {
+            Err(_e) => {
                 instructions.clear(); // Clear instructions to recalculate in the next iteration
             }
         }

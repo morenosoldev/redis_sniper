@@ -245,7 +245,7 @@ impl MongoHandler {
 
         // Perform the update operation
         match collection.update_one(filter.clone(), update, None).await {
-            Ok(update_result) => { Ok(()) }
+            Ok(_update_result) => { Ok(()) }
             Err(e) => { Err(e) }
         }
     }

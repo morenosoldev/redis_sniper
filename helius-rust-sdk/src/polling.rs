@@ -34,7 +34,7 @@ pub async fn poll_transaction(
         }
 
         // Poll for updates from the subscription stream
-        match timeout(Duration::from_secs(10), stream.next()).await {
+        match timeout(Duration::from_secs(25), stream.next()).await {
             Ok(Some(response)) => {
                 let value: RpcSignatureResult = response.value;
                 match value {
