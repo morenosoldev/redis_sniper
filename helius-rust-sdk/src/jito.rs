@@ -285,7 +285,7 @@ impl Helius {
 
         // Poll for confirmation status
         let timeout: Duration = Duration::from_secs(60);
-        let interval: Duration = Duration::from_secs(2);
+        let interval: Duration = Duration::from_secs(5);
         let start: tokio::time::Instant = tokio::time::Instant::now();
 
         while

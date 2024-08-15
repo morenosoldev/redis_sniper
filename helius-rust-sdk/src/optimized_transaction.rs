@@ -157,7 +157,7 @@ impl Helius {
         );
         let (recent_blockhash, last_valid_block_hash) = self
             .connection()
-            .get_latest_blockhash_with_commitment(CommitmentConfig::finalized())?;
+            .get_latest_blockhash_with_commitment(CommitmentConfig::confirmed())?;
         let mut final_instructions: Vec<Instruction> = vec![];
 
         // Check if any of the instructions provided set the compute unit price and/or limit, and throw an error if `true`
