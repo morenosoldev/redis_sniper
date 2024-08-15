@@ -11,6 +11,7 @@ use crate::Helius;
 
 use bincode::{ serialize, ErrorKind };
 use reqwest::StatusCode;
+use solana_client::rpc_client::SerializableTransaction;
 use solana_client::rpc_config::{ RpcSendTransactionConfig, RpcSimulateTransactionConfig };
 use solana_client::rpc_response::{ Response, RpcSimulateTransactionResult };
 use solana_sdk::{
@@ -349,7 +350,6 @@ impl Helius {
                 Some(&payer_pubkey)
             );
             tx.try_partial_sign(&config.signers, recent_blockhash)?;
-
             if let Some(fee_payer) = config.fee_payer {
                 tx.try_partial_sign(&[fee_payer], recent_blockhash)?;
             }
