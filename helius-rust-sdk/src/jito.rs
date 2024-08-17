@@ -16,7 +16,8 @@ use crate::types::{
     SmartTransactionConfig,
 };
 use crate::Helius;
-
+use crate::polling::poll_transaction;
+use std::sync::Arc;
 use bincode::{ serialize, ErrorKind };
 use chrono::format::parse;
 use phf::phf_map;
@@ -27,6 +28,8 @@ use serde_json::Value;
 use solana_client::rpc_config::{ RpcSendTransactionConfig, RpcSimulateTransactionConfig };
 use solana_client::rpc_response::{ Response, RpcSimulateTransactionResult };
 use solana_sdk::system_instruction;
+use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_client::nonblocking::pubsub_client::PubsubClient;
 use solana_sdk::{
     address_lookup_table::AddressLookupTableAccount,
     bs58::encode,
@@ -150,7 +153,6 @@ impl Helius {
                 )?
             }
         };
-
         let transaction_base58: String = encode(&serialized_transaction).into_string();
 
         Ok((transaction_base58, last_valid_block_height, signature))
@@ -184,6 +186,8 @@ impl Helius {
             Some(&request)
         ).await?;
 
+        println!("Response: {:?}", response);
+
         if let Some(error) = response.get("error") {
             return Err(HeliusError::BadRequest {
                 path: jito_api_url.to_string(),
@@ -211,35 +215,28 @@ impl Helius {
     ///
     /// # Returns
     /// A `Result` containing the status of the bundles as a `serde_json::Value`
-    pub async fn get_bundle_statuses(
-        &self,
-        bundle_ids: Vec<String>,
-        jito_api_url: &str
-    ) -> Result<Value> {
-        let request: BasicRequest = BasicRequest {
-            jsonrpc: "2.0".to_string(),
-            id: 1,
-            method: "getBundleStatuses".to_string(),
-            params: vec![bundle_ids],
+    pub async fn get_bundle_statuses(&self, signature: Signature) -> Result<(Signature, bool)> {
+        let rpc_client = Arc::new(
+            RpcClient::new(
+                "https://mainnet.helius-rpc.com/?api-key=3dda5cb1-79ed-4c15-9b3f-5635dde06630".to_string()
+            )
+        );
+        let pubsub_client: PubsubClient = match
+            PubsubClient::new(
+                &"wss://mainnet.helius-rpc.com/?api-key=3dda5cb1-79ed-4c15-9b3f-5635dde06630"
+            ).await
+        {
+            Ok(client) => client,
+            Err(e) => {
+                return Err(HeliusError::Unknown {
+                    code: StatusCode::INTERNAL_SERVER_ERROR,
+                    text: format!("Failed to create PubsubClient: {:?}", e),
+                });
+            }
         };
-
-        let parsed_url: Url = Url::parse(jito_api_url).expect("Failed to parse URL");
-
-        let response: Value = self.rpc_client.handler.send(
-            Method::POST,
-            parsed_url,
-            Some(&request)
-        ).await?;
-
-        if let Some(error) = response.get("error") {
-            return Err(HeliusError::BadRequest {
-                path: jito_api_url.to_string(),
-                text: format!("Error getting bundle statuses: {:?}", error),
-            });
-        }
-
+        let confirmed = poll_transaction(rpc_client, pubsub_client, signature).await;
         // Return the response value
-        Ok(response)
+        Ok((signature, confirmed.unwrap()))
     }
 
     /// Sends a smart transaction as a Jito bundle with a tip
@@ -277,38 +274,33 @@ impl Helius {
         let (serialized_transaction, last_valid_block_height, signature) =
             self.create_smart_transaction_with_tip(config.create_config, Some(tip)).await?;
 
+        println!("Serialized transaction: {:?}", serialized_transaction);
         // Send the transaction as a Jito bundle
-        let bundle_id: String = self.send_jito_bundle(
+        let _bundle_id: String = self.send_jito_bundle(
             vec![serialized_transaction],
             jito_api_url
         ).await?;
 
         // Poll for confirmation status
-        let timeout: Duration = Duration::from_secs(60);
-        let interval: Duration = Duration::from_secs(5);
+        let timeout: Duration = Duration::from_secs(30);
         let start: tokio::time::Instant = tokio::time::Instant::now();
 
         while
-            start.elapsed() < timeout ||
+            start.elapsed() < timeout &&
             self.connection().get_block_height()? <= last_valid_block_height
         {
-            let bundle_statuses: Value = self.get_bundle_statuses(
-                vec![bundle_id.clone()],
-                jito_api_url
+            let (returned_signature, confirmed) = self.get_bundle_statuses(
+                signature.clone()
             ).await?;
 
-            if let Some(values) = bundle_statuses["result"]["value"].as_array() {
-                if !values.is_empty() {
-                    if let Some(status) = values[0]["confirmation_status"].as_str() {
-                        if status == "confirmed" {
-                            println!("Done det tog {}", start.elapsed().as_secs());
-                            return Ok(signature);
-                        }
-                    }
-                }
+            if confirmed {
+                return Ok(returned_signature); // Return the bundle ID on success
+            } else {
+                return Err(HeliusError::Timeout {
+                    code: StatusCode::REQUEST_TIMEOUT,
+                    text: "Bundle failed to confirm within the timeout period".to_string(),
+                });
             }
-
-            sleep(interval).await;
         }
 
         Err(HeliusError::Timeout {

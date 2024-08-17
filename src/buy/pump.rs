@@ -28,7 +28,7 @@ const PUMP_FUN_PROGRAM: &str = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
 const PUMP_FUN_ACCOUNT: &str = "Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1";
 const SYSTEM_PROGRAM_ID: &str = "11111111111111111111111111111111";
 
-const MAX_RETRIES: usize = 3;
+const MAX_RETRIES: usize = 4;
 
 async fn create_transaction(
     instructions: Vec<SolanaInstruction>,
@@ -112,7 +112,7 @@ pub async fn pump_fun_buy(
         let token_out =
             (sol_in_lamports * (coin_data.virtual_token_reserves as u128)) /
             (coin_data.virtual_sol_reserves as u128);
-
+        println!("Token out: {}", token_out);
         let sol_in_with_slippage = sol_in * (1.0 + slippage_decimal);
         let max_sol_cost = (sol_in_with_slippage * 1_000_000_000.0) as u128;
 

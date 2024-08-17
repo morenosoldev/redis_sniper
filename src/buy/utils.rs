@@ -161,7 +161,6 @@ pub async fn get_program_account(
             Err(e) => Err(Box::new(e)),
         }
     }
-
     // Try fetching accounts with "sol-token" filters first
     if let Some(account) = fetch_accounts(client.clone(), sol_token_filters).await? {
         return Ok(Some(account));

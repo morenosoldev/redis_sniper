@@ -112,9 +112,10 @@ pub async fn sell_swap(
 
     // TODO: If input tokens is the native mint(wSOL) and the balance is inadequate, attempt to
     // convert SOL to wSOL.
+    const MIN_BALANCE_THRESHOLD: u64 = 500_000; // Adjust this value based on your specific precision needs
     let balance = user_in_acct.base.amount;
 
-    if balance == 0 {
+    if balance <= MIN_BALANCE_THRESHOLD {
         match mongo_handler.is_token_sold("solsniper", "tokens", &sell_transaction.mint).await {
             Ok(true) => {
                 return Err("Token already sold".into());
