@@ -48,7 +48,7 @@ async fn create_transaction(
             fee_payer: None,
         },
         send_options: RpcSendTransactionConfig {
-            skip_preflight: true,
+            skip_preflight: false,
             preflight_commitment: None,
             encoding: None,
             max_retries: None,

@@ -12,7 +12,8 @@ use solana_sdk::commitment_config::CommitmentConfig;
 pub async fn poll_transaction(
     rpc_client: Arc<RpcClient>,
     pub_subclient: PubsubClient,
-    signature: Signature
+    signature: Signature,
+    last_valid_block_height: u64
 ) -> Result<bool, Box<dyn std::error::Error + 'static>> {
     let (mut stream, _) = pub_subclient.signature_subscribe(&signature, None).await?;
     println!("Subscribed to transaction status for signature: {:?}", signature);
@@ -20,6 +21,13 @@ pub async fn poll_transaction(
     let mut checked_sent = false;
 
     loop {
+        // Check the block height against last_valid_block_height
+        let current_block_height = rpc_client.get_block_height().await?;
+        if current_block_height > last_valid_block_height {
+            println!("Current block height has exceeded the last valid block height.");
+            return Ok(false); // The transaction is no longer valid
+        }
+
         match timeout(Duration::from_secs(38), stream.next()).await {
             Ok(Some(response)) => {
                 let value: RpcSignatureResult = response.value;

@@ -11,7 +11,6 @@ use crate::Helius;
 
 use bincode::{ serialize, ErrorKind };
 use reqwest::StatusCode;
-use solana_client::rpc_client::SerializableTransaction;
 use solana_client::rpc_config::{ RpcSendTransactionConfig, RpcSimulateTransactionConfig };
 use solana_client::rpc_response::{ Response, RpcSimulateTransactionResult };
 use solana_sdk::{

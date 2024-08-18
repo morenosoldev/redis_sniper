@@ -215,7 +215,11 @@ impl Helius {
     ///
     /// # Returns
     /// A `Result` containing the status of the bundles as a `serde_json::Value`
-    pub async fn get_bundle_statuses(&self, signature: Signature) -> Result<(Signature, bool)> {
+    pub async fn get_bundle_statuses(
+        &self,
+        signature: Signature,
+        last_valid_block_height: u64
+    ) -> Result<(Signature, bool)> {
         let rpc_client = Arc::new(
             RpcClient::new(
                 "https://mainnet.helius-rpc.com/?api-key=3dda5cb1-79ed-4c15-9b3f-5635dde06630".to_string()
@@ -234,7 +238,12 @@ impl Helius {
                 });
             }
         };
-        let confirmed = poll_transaction(rpc_client, pubsub_client, signature).await;
+        let confirmed = poll_transaction(
+            rpc_client,
+            pubsub_client,
+            signature,
+            last_valid_block_height
+        ).await;
         // Return the response value
         Ok((signature, confirmed.unwrap()))
     }
@@ -274,38 +283,24 @@ impl Helius {
         let (serialized_transaction, last_valid_block_height, signature) =
             self.create_smart_transaction_with_tip(config.create_config, Some(tip)).await?;
 
-        println!("Serialized transaction: {:?}", serialized_transaction);
         // Send the transaction as a Jito bundle
         let _bundle_id: String = self.send_jito_bundle(
             vec![serialized_transaction],
             jito_api_url
         ).await?;
 
-        // Poll for confirmation status
-        let timeout: Duration = Duration::from_secs(30);
-        let start: tokio::time::Instant = tokio::time::Instant::now();
+        let (returned_signature, confirmed) = self.get_bundle_statuses(
+            signature.clone(),
+            last_valid_block_height
+        ).await?;
 
-        while
-            start.elapsed() < timeout &&
-            self.connection().get_block_height()? <= last_valid_block_height
-        {
-            let (returned_signature, confirmed) = self.get_bundle_statuses(
-                signature.clone()
-            ).await?;
-
-            if confirmed {
-                return Ok(returned_signature); // Return the bundle ID on success
-            } else {
-                return Err(HeliusError::Timeout {
-                    code: StatusCode::REQUEST_TIMEOUT,
-                    text: "Bundle failed to confirm within the timeout period".to_string(),
-                });
-            }
+        if confirmed {
+            return Ok(returned_signature); // Return the bundle ID on success
+        } else {
+            return Err(HeliusError::Timeout {
+                code: StatusCode::REQUEST_TIMEOUT,
+                text: "Bundle failed to confirm within the timeout period".to_string(),
+            });
         }
-
-        Err(HeliusError::Timeout {
-            code: StatusCode::REQUEST_TIMEOUT,
-            text: "Bundle failed to confirm within the timeout period".to_string(),
-        })
     }
 }
