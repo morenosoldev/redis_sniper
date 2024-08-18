@@ -6,6 +6,7 @@ use serde::{ Serialize, Deserialize };
 use dotenv::dotenv;
 use buy::raydium_sdk::LiquidityPoolKeysString;
 use buy::pump::pump_fun_buy;
+use buy::buy::buy_swap;
 use tokio::time::{ sleep, Duration };
 use std::time::Instant;
 use buy::utils::get_liquidity_pool;
@@ -60,7 +61,7 @@ async fn handle_trade_message(payload: String) {
                         &in_token_pubkey
                     ).await;
 
-                    let buy_success = if let Ok(Some(_buy_pool)) = buy_pool_result {
+                    let buy_success = if let Ok(Some(buy_pool)) = buy_pool_result {
                         let redis_url = std::env
                             ::var("REDIS_URL")
                             .expect("You must set the REDIS_URL environment variable!");
@@ -71,17 +72,29 @@ async fn handle_trade_message(payload: String) {
                             .get_multiplexed_async_connection().await
                             .expect("Failed to get Redis connection");
 
-                        let confirmation_message =
-                            json!({
-                        "status": "fail",
+                        // Proceed with the buy swap using the existing logic
+                        match buy_swap(buy_pool, tx.lp_decimals, tx.amount_in).await {
+                            Ok(_) => {
+                                let elapsed = start_time.elapsed();
+
+                                let confirmation_message =
+                                    json!({
+                        "status": "success",
                         "mint": tx.in_token,
                     }).to_string();
 
-                        let _: () = connection
-                            .publish("trading_confirmation", confirmation_message).await
-                            .expect("Failed to send confirmation");
+                                let _: () = connection
+                                    .publish("trading_confirmation", confirmation_message).await
+                                    .expect("Failed to send confirmation");
 
-                        false
+                                dbg!("Buy confirmed successfully. Time taken: {:?}", elapsed);
+                                true
+                            }
+                            Err(err) => {
+                                eprintln!("Buy confirmation error: {:?}", err);
+                                false
+                            }
+                        }
                     } else {
                         // Treat as pump token
                         dbg!("Running pump_fun_buy");

@@ -127,7 +127,7 @@ impl MongoHandler {
         };
 
         // Check if amount or sol_amount is 0 or 0.0
-        if buy_transaction.amount == 0.0 {
+        if buy_transaction.amount <= 100.0 {
             self.update_token_metadata_sold_field(
                 &buy_transaction.token_info.base_mint,
                 "solsniper",

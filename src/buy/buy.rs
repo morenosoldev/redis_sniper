@@ -127,10 +127,10 @@ pub async fn buy_swap(
                 },
             };
 
-            match helius.send_smart_transaction(config).await {
+            match helius.send_smart_transaction_with_tip(config, Some(19000), Some("NY")).await {
                 Ok(signature) => {
                     dbg!("Transaction sent successfully: {}", signature);
-                    tokio::time::sleep(Duration::from_secs(15)).await;
+                    tokio::time::sleep(Duration::from_secs(10)).await;
                     // Retry fetching the user's token account info
                     token_in
                         .get_account_info(&user_in_token_account).await
