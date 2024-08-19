@@ -121,7 +121,7 @@ pub async fn pump_fun_sell(
         println!("Token Amount: {}", token_amount_decimals);
         println!("Buy Transaction Amount: {}", buy_transaction.amount);
 
-        if buy_transaction.amount != token_amount_decimals {
+        if buy_transaction.amount > token_amount_decimals {
             let signature = find_sell_signature(&sell_transaction.mint).await?;
 
             if let Err(err) = confirm_sell(&signature, sell_transaction, None).await {
