@@ -169,7 +169,6 @@ async fn handle_trade_message(payload: String) {
             > = serde_json::from_value(trade_info.clone());
             match sell_transaction {
                 Ok(tx) => {
-                    // Measure time taken for sell transaction
                     let start_time = Instant::now();
 
                     let rpc_endpoint = std::env
@@ -178,14 +177,12 @@ async fn handle_trade_message(payload: String) {
                     let client: Arc<RpcClient> = Arc::new(RpcClient::new(rpc_endpoint));
 
                     let in_token_pubkey = Pubkey::from_str(&tx.mint).unwrap();
-
                     let sell_pool_result = get_sell_liquidity_pool(
                         client.clone(),
                         &in_token_pubkey
                     ).await;
 
                     let sell_success = if let Ok(Some(_sell_pool)) = sell_pool_result {
-                        // Proceed with the sell swap using the existing logic
                         match sell_swap(&tx).await {
                             Ok(_) => {
                                 let elapsed = start_time.elapsed();
@@ -198,9 +195,8 @@ async fn handle_trade_message(payload: String) {
                             }
                         }
                     } else {
-                        // Execute the pump_fun_sell
                         let mint_str = &tx.mint;
-                        let slippage_decimal = 20.0; // Update as necessary
+                        let slippage_decimal = 20.0;
 
                         match pump_fun_sell(mint_str, tx.amount, slippage_decimal, &tx).await {
                             Ok(_) => {
@@ -215,28 +211,25 @@ async fn handle_trade_message(payload: String) {
                         }
                     };
 
-                    // Send confirmation message back
-                    if sell_success {
-                        let redis_url = std::env
-                            ::var("REDIS_URL")
-                            .expect("You must set the REDIS_URL environment variable!");
-                        let client = redis::Client
-                            ::open(redis_url)
-                            .expect("Failed to create Redis client");
-                        let mut connection = client
-                            .get_multiplexed_async_connection().await
-                            .expect("Failed to get Redis connection");
+                    let redis_url = std::env
+                        ::var("REDIS_URL")
+                        .expect("You must set the REDIS_URL environment variable!");
+                    let client = redis::Client
+                        ::open(redis_url)
+                        .expect("Failed to create Redis client");
+                    let mut connection = client
+                        .get_multiplexed_async_connection().await
+                        .expect("Failed to get Redis connection");
 
-                        let confirmation_message =
-                            json!({
-                            "status": "success",
-                            "mint": tx.mint,
-                        }).to_string();
+                    let confirmation_message =
+                        json!({
+                        "status": if sell_success { "success" } else { "fail" },
+                        "mint": tx.mint,
+                    }).to_string();
 
-                        let _: () = connection
-                            .publish("trading_confirmation", confirmation_message).await
-                            .expect("Failed to send confirmation");
-                    }
+                    let _: () = connection
+                        .publish("trading_confirmation", confirmation_message).await
+                        .expect("Failed to send confirmation");
                 }
                 Err(e) => {
                     eprintln!("Failed to deserialize SellTransaction: {}", e);

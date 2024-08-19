@@ -110,12 +110,23 @@ pub async fn sell_swap(
     dbg!("User input-tokens ATA={}", user_in_token_account);
     let user_in_acct = in_token_client.get_account_info(&user_in_token_account).await?;
 
-    // TODO: If input tokens is the native mint(wSOL) and the balance is inadequate, attempt to
-    // convert SOL to wSOL.
     const MIN_BALANCE_THRESHOLD: u64 = 500_000; // Adjust this value based on your specific precision needs
     let balance = user_in_acct.base.amount;
 
+    // 1. Check if the balance is sufficient to perform the swap
+    if balance < sell_transaction.amount {
+        return Err(
+            format!(
+                "Insufficient balance. Attempting to swap {} tokens, but only {} tokens are available.",
+                sell_transaction.amount,
+                balance
+            ).into()
+        );
+    }
+
+    // 2. Check if the balance is close to zero
     if balance <= MIN_BALANCE_THRESHOLD {
+        // If the balance is close to zero, handle the sell signature
         match mongo_handler.is_token_sold("solsniper", "tokens", &sell_transaction.mint).await {
             Ok(true) => {
                 return Err("Token already sold".into());
