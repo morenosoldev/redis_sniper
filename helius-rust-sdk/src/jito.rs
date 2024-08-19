@@ -206,7 +206,6 @@ impl Helius {
             text: "Unexpected response format".to_string(),
         })
     }
-
     /// Get the status of Jito bundles
     ///
     /// # Arguments
@@ -217,35 +216,51 @@ impl Helius {
     /// A `Result` containing the status of the bundles as a `serde_json::Value`
     pub async fn get_bundle_statuses(
         &self,
-        signature: Signature,
-        last_valid_block_height: u64
-    ) -> Result<(Signature, bool)> {
-        let rpc_client = Arc::new(
-            RpcClient::new(
-                "https://mainnet.helius-rpc.com/?api-key=3dda5cb1-79ed-4c15-9b3f-5635dde06630".to_string()
-            )
-        );
-        let pubsub_client: PubsubClient = match
-            PubsubClient::new(
-                &"wss://mainnet.helius-rpc.com/?api-key=3dda5cb1-79ed-4c15-9b3f-5635dde06630"
-            ).await
-        {
-            Ok(client) => client,
-            Err(e) => {
-                return Err(HeliusError::Unknown {
-                    code: StatusCode::INTERNAL_SERVER_ERROR,
-                    text: format!("Failed to create PubsubClient: {:?}", e),
-                });
-            }
+        bundle_ids: Vec<String>,
+        jito_api_url: &str
+    ) -> Result<Value> {
+        let request: BasicRequest = BasicRequest {
+            jsonrpc: "2.0".to_string(),
+            id: 1,
+            method: "getInflightBundleStatuses".to_string(),
+            params: vec![bundle_ids],
         };
-        let confirmed = poll_transaction(
-            rpc_client,
-            pubsub_client,
-            signature,
-            last_valid_block_height
-        ).await;
-        // Return the response value
-        Ok((signature, confirmed.unwrap()))
+
+        let parsed_url: Url = Url::parse(jito_api_url).expect("Failed to parse URL");
+
+        let response: Value = self.rpc_client.handler.send(
+            Method::POST,
+            parsed_url,
+            Some(&request)
+        ).await?;
+
+        if let Some(error) = response.get("error") {
+            return Err(HeliusError::BadRequest {
+                path: jito_api_url.to_string(),
+                text: format!("Error getting bundle statuses: {:?}", error),
+            });
+        }
+
+        println!("Response: {:?}", response);
+        if let Some(result) = response.get("result") {
+            if let Some(value) = result.get("value") {
+                if let Some(statuses) = value.as_array() {
+                    for status in statuses {
+                        if let Some(status_str) = status.get("status").and_then(|s| s.as_str()) {
+                            if status_str == "Failed" {
+                                return Err(HeliusError::Timeout {
+                                    code: StatusCode::REQUEST_TIMEOUT,
+                                    text: "Bundle failed to confirm within the timeout period".to_string(),
+                                });
+                            } else if status_str == "Landed" {
+                                return Ok(response);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(response)
     }
 
     /// Sends a smart transaction as a Jito bundle with a tip
@@ -284,23 +299,41 @@ impl Helius {
             self.create_smart_transaction_with_tip(config.create_config, Some(tip)).await?;
 
         // Send the transaction as a Jito bundle
-        let _bundle_id: String = self.send_jito_bundle(
+        let bundle_id: String = self.send_jito_bundle(
             vec![serialized_transaction],
             jito_api_url
         ).await?;
 
-        let (returned_signature, confirmed) = self.get_bundle_statuses(
-            signature.clone(),
-            last_valid_block_height
-        ).await?;
+        // Poll for confirmation status
+        let timeout: Duration = Duration::from_secs(60);
+        let interval: Duration = Duration::from_secs(5);
+        let start: tokio::time::Instant = tokio::time::Instant::now();
 
-        if confirmed {
-            return Ok(returned_signature); // Return the bundle ID on success
-        } else {
-            return Err(HeliusError::Timeout {
-                code: StatusCode::REQUEST_TIMEOUT,
-                text: "Bundle failed to confirm within the timeout period".to_string(),
-            });
+        while
+            start.elapsed() < timeout ||
+            self.connection().get_block_height()? <= last_valid_block_height
+        {
+            let bundle_statuses: Value = self.get_bundle_statuses(
+                vec![bundle_id.clone()],
+                jito_api_url
+            ).await?;
+
+            if let Some(values) = bundle_statuses["result"]["value"].as_array() {
+                if !values.is_empty() {
+                    if let Some(status) = values[0]["status"].as_str() {
+                        if status == "Landed" {
+                            return Ok(signature);
+                        }
+                    }
+                }
+            }
+
+            sleep(interval).await;
         }
+
+        Err(HeliusError::Timeout {
+            code: StatusCode::REQUEST_TIMEOUT,
+            text: "Bundle failed to confirm within the timeout period".to_string(),
+        })
     }
 }
