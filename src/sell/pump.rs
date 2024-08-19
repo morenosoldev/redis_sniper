@@ -111,8 +111,24 @@ pub async fn pump_fun_sell(
         // Define a larger epsilon value to consider balances like 0.247686 as effectively zero
         let epsilon = 1.0; // Adjusted to consider balances <= 1.0 as zero
 
+        let buy_transaction = mongo_handler.get_buy_transaction_from_token(
+            &sell_transaction.mint,
+            "solsniper",
+            "buy_transactions"
+        ).await?;
+
         println!("Balance: {}", balance);
         println!("Token Amount: {}", token_amount_decimals);
+        println!("Buy Transaction Amount: {}", buy_transaction.amount);
+
+        if buy_transaction.amount != token_amount_decimals {
+            let signature = find_sell_signature(&sell_transaction.mint).await?;
+
+            if let Err(err) = confirm_sell(&signature, sell_transaction, None).await {
+                return Err(err.into());
+            }
+            return Err("Token amount does not match the buy transaction".into());
+        }
 
         // 1. Check if the balance is sufficient to sell the requested amount
         if balance < token_amount_decimals {
@@ -123,6 +139,25 @@ pub async fn pump_fun_sell(
                     balance
                 ).into()
             );
+        }
+
+        if balance == 0.0 {
+            match mongo_handler.is_token_sold("solsniper", "tokens", &sell_transaction.mint).await {
+                Ok(true) => {
+                    return Err("Token already sold".into());
+                }
+                Ok(false) => {
+                    let signature = find_sell_signature(&sell_transaction.mint).await?;
+
+                    if let Err(err) = confirm_sell(&signature, sell_transaction, None).await {
+                        return Err(err.into());
+                    }
+                    return Ok(signature);
+                }
+                Err(err) => {
+                    return Err(err.into());
+                }
+            }
         }
 
         // 2. Check if the balance is close to zero
