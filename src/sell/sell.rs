@@ -225,7 +225,7 @@ pub async fn sell_swap(
             },
         };
 
-        match helius.send_smart_transaction_with_tip(config, Some(19000), Some("NY")).await {
+        match helius.send_smart_transaction_with_tip(config, Some(64000), Some("NY")).await {
             Ok(signature) => {
                 dbg!("Transaction sent successfully: {}", &signature);
                 let mut confirmed = false;
