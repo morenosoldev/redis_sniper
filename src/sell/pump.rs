@@ -123,10 +123,13 @@ pub async fn pump_fun_sell(
 
         // 1. Check if the balance is sufficient to sell the requested amount
         if balance < token_amount_decimals {
-            let signature = find_sell_signature(&sell_transaction.mint).await?;
+            if buy_transaction.amount > token_amount_decimals {
+                let signature = find_sell_signature(&sell_transaction.mint).await?;
 
-            if let Err(err) = confirm_sell(&signature, sell_transaction, None).await {
-                return Err(err.into());
+                if let Err(err) = confirm_sell(&signature, sell_transaction, None).await {
+                    return Err(err.into());
+                }
+                return Err("Token amount does not match the buy transaction".into());
             }
 
             return Err(
