@@ -117,13 +117,17 @@ pub async fn pump_fun_sell(
             "buy_transactions"
         ).await?;
 
+        // Convert the buy transaction amount to decimal form
+        let buy_transaction_amount_decimals =
+            (buy_transaction.amount as f64) / ((10u64).pow(token_balance.decimals as u32) as f64);
+
         println!("Balance: {}", balance);
         println!("Token Amount: {}", token_amount_decimals);
-        println!("Buy Transaction Amount: {}", buy_transaction.amount);
+        println!("Buy Transaction Amount: {}", buy_transaction_amount_decimals);
 
         // 1. Check if the balance is sufficient to sell the requested amount
         if balance < token_amount_decimals {
-            if buy_transaction.amount > token_amount_decimals {
+            if buy_transaction_amount_decimals > token_amount_decimals {
                 let signature = find_sell_signature(&sell_transaction.mint).await?;
 
                 if let Err(err) = confirm_sell(&signature, sell_transaction, None).await {
