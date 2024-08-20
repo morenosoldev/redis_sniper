@@ -83,6 +83,7 @@ pub struct TradeState {
     pub taken_out: f64,
     pub remaining: f64,
     pub token_metadata: Option<TokenMetadata>,
+    pub created_at: DateTime,
 }
 
 impl MongoHandler {
@@ -115,6 +116,7 @@ impl MongoHandler {
     pub async fn store_token(
         &self,
         token_metadata: TokenMetadata,
+        entry_price: f64,
         db_name: &str,
         collection_name: &str,
         sol_amount: f64
@@ -151,7 +153,7 @@ impl MongoHandler {
 
             let new_trade_state = TradeState {
                 token_mint: token_metadata.mint.clone(),
-                entry_price: 0.0,
+                entry_price: entry_price,
                 ath_50_percent_triggered: false,
                 initial_investment_taken: false,
                 profit_taking_count: 0,
@@ -163,6 +165,7 @@ impl MongoHandler {
                 token_metadata: Some(token_metadata),
                 taken_out: 0.0,
                 remaining: 0.0,
+                created_at: DateTime::now(),
             };
 
             self.create_trade_state(&new_trade_state).await?;

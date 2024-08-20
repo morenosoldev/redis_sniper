@@ -75,6 +75,7 @@ pub struct TradeState {
     pub taken_out: f64,
     pub remaining: f64,
     pub token_metadata: Option<TokenMetadata>,
+    pub created_at: DateTime,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)] // Add `Clone` to derive
@@ -284,6 +285,7 @@ impl MongoHandler {
                     token_metadata: None,
                     taken_out: 0.0,
                     remaining: 0.0,
+                    created_at: DateTime::now(),
                 })
             }
         }

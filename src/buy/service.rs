@@ -180,6 +180,7 @@ pub async fn save_buy_details(
                     if
                         let Err(e) = mongo_handler.store_token(
                             token_metadata,
+                            buy_price_per_token_in_sol,
                             "solsniper",
                             "tokens",
                             sol_amount
