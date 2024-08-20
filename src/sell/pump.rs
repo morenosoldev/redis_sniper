@@ -125,26 +125,6 @@ pub async fn pump_fun_sell(
         println!("Token Amount: {}", token_amount_decimals);
         println!("Buy Transaction Amount: {}", buy_transaction_amount_decimals);
 
-        // 1. Check if the balance is sufficient to sell the requested amount
-        if balance < token_amount_decimals {
-            if buy_transaction_amount_decimals > token_amount_decimals {
-                let signature = find_sell_signature(&sell_transaction.mint).await?;
-
-                if let Err(err) = confirm_sell(&signature, sell_transaction, None).await {
-                    return Err(err.into());
-                }
-                return Err("Token amount does not match the buy transaction".into());
-            }
-
-            return Err(
-                format!(
-                    "Insufficient balance. Attempting to sell {} tokens, but only {} tokens are available.",
-                    token_amount_decimals,
-                    balance
-                ).into()
-            );
-        }
-
         if balance == 0.0 {
             match mongo_handler.is_token_sold("solsniper", "tokens", &sell_transaction.mint).await {
                 Ok(true) => {
@@ -183,6 +163,26 @@ pub async fn pump_fun_sell(
                     return Err(err.into());
                 }
             }
+        }
+
+        // 1. Check if the balance is sufficient to sell the requested amount
+        if balance < token_amount_decimals {
+            if buy_transaction_amount_decimals > token_amount_decimals {
+                let signature = find_sell_signature(&sell_transaction.mint).await?;
+
+                if let Err(err) = confirm_sell(&signature, sell_transaction, None).await {
+                    return Err(err.into());
+                }
+                return Err("Token amount does not match the buy transaction".into());
+            }
+
+            return Err(
+                format!(
+                    "Insufficient balance. Attempting to sell {} tokens, but only {} tokens are available.",
+                    token_amount_decimals,
+                    balance
+                ).into()
+            );
         }
 
         // 3. Proceed with the normal sell process if none of the above conditions are met
