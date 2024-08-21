@@ -101,7 +101,14 @@ async fn handle_trade_message(payload: String) {
                         let mint_str = &tx.in_token;
                         let slippage_decimal = 20.0; // Update as necessary
 
-                        match pump_fun_buy(mint_str, tx.amount_in, slippage_decimal).await {
+                        match
+                            pump_fun_buy(
+                                mint_str,
+                                tx.amount_in,
+                                slippage_decimal,
+                                tx.lp_decimals
+                            ).await
+                        {
                             Ok(_) => {
                                 let elapsed = start_time.elapsed();
                                 println!("Pump fun buy successful. Time taken: {:?}", elapsed);

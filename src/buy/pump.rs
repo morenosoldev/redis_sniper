@@ -71,7 +71,8 @@ async fn create_transaction(
 pub async fn pump_fun_buy(
     mint_str: &str,
     sol_in: f64,
-    slippage_decimal: f64
+    slippage_decimal: f64,
+    lp_decimals: u8
 ) -> Result<Signature, Box<dyn Error>> {
     let rpc_endpoint = std::env
         ::var("RPC_URL")
@@ -160,7 +161,7 @@ pub async fn pump_fun_buy(
                 let _saved_details = save_buy_details(
                     client.clone(),
                     &tx,
-                    8,
+                    lp_decimals,
                     mint_str,
                     key_z,
                     true
