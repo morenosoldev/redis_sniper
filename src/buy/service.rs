@@ -67,28 +67,10 @@ pub async fn save_buy_details(
                     // Adjust the token amount using the decimals
                     let adjusted_token_amount = amount / (10f64).powf(token_decimals);
 
-                    let (buy_price_per_token_in_sol, current_sol_price, _buy_price_usd) = if pump {
-                        // Use calculate_pump_price if the token_mint ends with "pump"
-                        match calculate_pump_price(&client.clone(), mint.parse()?).await {
-                            Ok(price) => {
-                                let price_per_token_in_sol = price; // Adjust as necessary
-                                let current_sol_price =
-                                    get_current_sol_price().await.unwrap_or_default();
-                                let buy_price_usd = price_per_token_in_sol * current_sol_price;
-                                (price_per_token_in_sol, current_sol_price, buy_price_usd)
-                            }
-                            Err(e) => {
-                                return Err(e.into()); // Skip this token on error
-                            }
-                        }
-                    } else {
-                        // Calculate the buy price per token in SOL
-                        let buy_price_per_token_in_sol = sol_amount / adjusted_token_amount;
-                        let current_sol_price = get_current_sol_price().await.unwrap_or_default();
-                        let usd_amount = sol_amount * current_sol_price;
-
-                        (buy_price_per_token_in_sol, current_sol_price, usd_amount)
-                    };
+                    // Calculate the buy price per token in SOL
+                    let buy_price_per_token_in_sol = sol_amount / adjusted_token_amount;
+                    let current_sol_price = get_current_sol_price().await.unwrap_or_default();
+                    //let usd_amount = sol_amount * current_sol_price;
 
                     let fee = confirmed_transaction.transaction.meta.unwrap().fee;
 
