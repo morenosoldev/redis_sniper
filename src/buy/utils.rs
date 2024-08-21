@@ -429,6 +429,21 @@ pub fn get_second_instruction_amount(
     None
 }
 
+pub async fn get_pump_image(mint_adress: &str) -> Result<String, Box<dyn Error>> {
+    let url = format!("https://frontend-api.pump.fun/coins/{}", mint_adress);
+
+    // Send the GET request to the API
+    let response = reqwest::get(&url).await?;
+
+    if response.status().is_success() {
+        let response_json: Value = response.json().await?;
+        let image = response_json["image_uri"].as_str().unwrap_or("");
+        Ok(image.to_string())
+    } else {
+        Ok("".to_string())
+    }
+}
+
 pub async fn get_token_metadata(
     mint_address: &str,
     balance: f64,
@@ -466,7 +481,7 @@ pub async fn get_token_metadata(
     let symbol = metadata.symbol.trim_matches(char::from(0)).to_string();
     let uri = metadata.uri.trim_matches(char::from(0)).to_string();
 
-    let (description, image, twitter, created_on) = match reqwest::get(&uri).await {
+    let (description, mut image, twitter, created_on) = match reqwest::get(&uri).await {
         Ok(response) => {
             match response.json::<serde_json::Value>().await {
                 Ok(json) =>
@@ -481,6 +496,11 @@ pub async fn get_token_metadata(
         }
         Err(_) => ("".to_string(), "".to_string(), "".to_string(), "".to_string()),
     };
+
+    // Check if the image is empty or None, then fetch from pump.fun
+    if image.is_empty() {
+        image = get_pump_image(mint_address).await.unwrap_or_default();
+    }
 
     Ok(TokenMetadata {
         name,
