@@ -182,7 +182,7 @@ pub async fn buy_swap(
             },
         };
 
-        match helius.send_smart_transaction(config).await {
+        match helius.send_smart_transaction_with_tip(config, Some(64000), Some("NY")).await {
             Ok(signature) => {
                 dbg!("Transaction sent successfully: {}", signature);
             }
@@ -231,7 +231,7 @@ pub async fn buy_swap(
         }
     }
 
-    let mut slippage = 3.0;
+    let mut slippage = 30.0;
 
     let mut retries = 0;
     let max_retries = 3;

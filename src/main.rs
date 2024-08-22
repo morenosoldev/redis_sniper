@@ -203,7 +203,7 @@ async fn handle_trade_message(payload: String) {
                         }
                     } else {
                         let mint_str = &tx.mint;
-                        let slippage_decimal = 30.0;
+                        let slippage_decimal = 50.0;
 
                         match pump_fun_sell(mint_str, tx.amount, slippage_decimal, &tx).await {
                             Ok(_) => {
