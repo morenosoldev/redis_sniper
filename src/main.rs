@@ -99,7 +99,7 @@ async fn handle_trade_message(payload: String) {
                         // Treat as pump token
                         dbg!("Running pump_fun_buy");
                         let mint_str = &tx.in_token;
-                        let slippage_decimal = 65.0; // Update as necessary
+                        let slippage_decimal = 80.0; // Update as necessary
 
                         match
                             pump_fun_buy(
@@ -203,7 +203,7 @@ async fn handle_trade_message(payload: String) {
                         }
                     } else {
                         let mint_str = &tx.mint;
-                        let slippage_decimal = 50.0;
+                        let slippage_decimal = 80.0;
 
                         match pump_fun_sell(mint_str, tx.amount, slippage_decimal, &tx).await {
                             Ok(_) => {
