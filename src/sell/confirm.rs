@@ -49,17 +49,12 @@ pub async fn confirm_sell(
         match rpc_client.get_transaction_with_config(&signature, config.clone()).await {
             Ok(confirmed_transaction) => {
                 let sell_price = sell_transaction.current_token_price_usd;
-                let sol_amount = match sol_received {
-                    Some(amount) => amount,
-                    None => {
-                        // Calculate sol_amount if sol_received is not provided
-                        calculate_sol_amount_received(
-                            &confirmed_transaction,
-                            &rpc_client,
-                            &Pubkey::from_str(&sell_transaction.mint).unwrap()
-                        ).await? as f64
-                    }
-                };
+                let sol_amount = calculate_sol_amount_received(
+                    &confirmed_transaction,
+                    &rpc_client,
+                    &Pubkey::from_str(&sell_transaction.mint).unwrap()
+                ).await? as f64;
+
                 let profit = (sol_amount as f64) - (sell_transaction.sol_amount as f64);
                 let profit_usd = profit * usd_sol_price;
                 let profit_percentage = (profit / (sell_transaction.sol_amount as f64)) * 100.0;
