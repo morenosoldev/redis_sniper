@@ -59,7 +59,7 @@ async fn create_transaction(
         },
     };
 
-    match helius.send_smart_transaction_with_tip(config, Some(15000000), Some("NY")).await {
+    match helius.send_smart_transaction_with_tip(config, Some(10000000), Some("NY")).await {
         Ok(signature) => {
             dbg!("Transaction sent successfully: {}", &signature);
             return Ok(signature);
