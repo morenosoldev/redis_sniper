@@ -29,7 +29,9 @@ pub async fn save_buy_details(
     lp_decimals: u8,
     mint: &str,
     token_vaults: TokenVaults,
-    pump: bool
+    pump: bool,
+    group_title: String,
+    user_name: String
 ) -> Result<(), Box<dyn Error>> {
     let max_retries = 3;
     let retry_delay = Duration::from_secs(10);
@@ -175,7 +177,9 @@ pub async fn save_buy_details(
                             "solsniper",
                             fee_sol,
                             "tokens",
-                            sol_amount
+                            sol_amount,
+                            group_title,
+                            user_name
                         ).await
                     {
                         eprintln!("Error storing token info: {:?}", e);

@@ -80,6 +80,8 @@ pub struct TradeState {
     pub stop_loss_at_breakeven: bool,
     pub stop_loss_triggered: bool,
     pub total_fee: f64,
+    pub group_title: String,
+    pub user_name: String,
     pub initial_investment: f64,
     pub taken_out: f64,
     pub remaining: f64,
@@ -121,7 +123,9 @@ impl MongoHandler {
         db_name: &str,
         initial_fee: f64,
         collection_name: &str,
-        sol_amount: f64
+        sol_amount: f64,
+        group_title: String,
+        user_name: String
     ) -> Result<(), MongoError> {
         let db = self.client.database(db_name);
         let collection = db.collection::<Document>(collection_name);
@@ -164,6 +168,8 @@ impl MongoHandler {
                 last_profit_percentage: 0.0,
                 stop_loss_triggered: false,
                 stop_loss_at_breakeven: false,
+                group_title: group_title,
+                user_name: user_name,
                 initial_investment: sol_amount,
                 token_metadata: Some(token_metadata),
                 taken_out: 0.0,

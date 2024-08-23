@@ -29,6 +29,8 @@ struct BuyTransaction {
     amount_in: f64,
     key_z: Option<LiquidityPoolKeysString>,
     lp_decimals: u8,
+    group_title: String,
+    user_name: String,
 }
 async fn handle_trade_message(payload: String) {
     let trade_info: serde_json::Value = match serde_json::from_str(&payload) {
@@ -73,7 +75,15 @@ async fn handle_trade_message(payload: String) {
                             .expect("Failed to get Redis connection");
 
                         // Proceed with the buy swap using the existing logic
-                        match buy_swap(buy_pool, tx.lp_decimals, tx.amount_in).await {
+                        match
+                            buy_swap(
+                                buy_pool,
+                                tx.lp_decimals,
+                                tx.amount_in,
+                                tx.group_title,
+                                tx.user_name
+                            ).await
+                        {
                             Ok(_) => {
                                 let elapsed = start_time.elapsed();
 
@@ -106,7 +116,9 @@ async fn handle_trade_message(payload: String) {
                                 mint_str,
                                 tx.amount_in,
                                 slippage_decimal,
-                                tx.lp_decimals
+                                tx.lp_decimals,
+                                tx.group_title,
+                                tx.user_name
                             ).await
                         {
                             Ok(_) => {

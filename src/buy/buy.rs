@@ -36,7 +36,9 @@ pub enum SwapError {
 pub async fn buy_swap(
     key_z: LiquidityPoolKeys,
     lp_decimals: u8,
-    sol_amount: f64
+    sol_amount: f64,
+    group_title: String,
+    user_name: String
 ) -> Result<String, SwapError> {
     let api_key: String = std::env
         ::var("HELIUS_API_KEY")
@@ -317,7 +319,9 @@ pub async fn buy_swap(
                     lp_decimals,
                     &token_out_mint.to_string(),
                     token_vaults,
-                    false
+                    false,
+                    group_title,
+                    user_name
                 ).await;
 
                 if let Err(e) = saved_details {
