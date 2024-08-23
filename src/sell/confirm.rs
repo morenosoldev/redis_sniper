@@ -22,7 +22,7 @@ use chrono::Utc;
 pub async fn confirm_sell(
     signature: &Signature,
     sell_transaction: &SellTransaction,
-    sol_received: Option<f64>
+    is_pump: bool
 ) -> Result<(), Box<dyn Error>> {
     let rpc_endpoint = std::env
         ::var("RPC_URL")
@@ -49,7 +49,7 @@ pub async fn confirm_sell(
         match rpc_client.get_transaction_with_config(&signature, config.clone()).await {
             Ok(confirmed_transaction) => {
                 let sell_price = sell_transaction.current_token_price_usd;
-                let sol_amount = calculate_sol_amount_received(
+                let mut sol_amount = calculate_sol_amount_received(
                     &confirmed_transaction,
                     &rpc_client,
                     &Pubkey::from_str(&sell_transaction.mint).unwrap()
@@ -58,8 +58,18 @@ pub async fn confirm_sell(
                 let profit = (sol_amount as f64) - (sell_transaction.sol_amount as f64);
                 let profit_usd = profit * usd_sol_price;
                 let profit_percentage = (profit / (sell_transaction.sol_amount as f64)) * 100.0;
-                let fee = confirmed_transaction.transaction.meta.unwrap().fee;
 
+                let mut fee = confirmed_transaction.transaction.meta.unwrap().fee;
+
+                if is_pump {
+                    // Set the fee to 1% of the SOL amount received
+                    fee = (sol_amount * 0.01 * 1_000_000_000.0) as u64;
+
+                    // Subtract the fee from sol_amount to get the net amount after fee deduction
+                    sol_amount -= (fee as f64) / 1_000_000_000.0;
+                }
+
+                // Calculate the fee in SOL and USD terms
                 let fee_sol = (fee as f64) / 1_000_000_000.0;
                 let fee_usd = fee_sol * usd_sol_price;
 
@@ -105,6 +115,7 @@ pub async fn confirm_sell(
                 }
 
                 trade_state.taken_out += sol_amount;
+                trade_state.total_fee += fee_sol;
                 trade_state.remaining -= 0.0;
 
                 mongo_handler.update_trade_state(&trade_state).await?;

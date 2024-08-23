@@ -133,7 +133,7 @@ pub async fn pump_fun_sell(
                 Ok(false) => {
                     let signature = find_sell_signature(&sell_transaction.mint).await?;
 
-                    if let Err(err) = confirm_sell(&signature, sell_transaction, None).await {
+                    if let Err(err) = confirm_sell(&signature, sell_transaction, true).await {
                         return Err(err.into());
                     }
                     return Ok(signature);
@@ -154,7 +154,7 @@ pub async fn pump_fun_sell(
                 Ok(false) => {
                     let signature = find_sell_signature(&sell_transaction.mint).await?;
 
-                    if let Err(err) = confirm_sell(&signature, sell_transaction, None).await {
+                    if let Err(err) = confirm_sell(&signature, sell_transaction, true).await {
                         return Err(err.into());
                     }
                     return Ok(signature);
@@ -170,7 +170,7 @@ pub async fn pump_fun_sell(
             if buy_transaction_amount_decimals > token_amount_decimals {
                 let signature = find_sell_signature(&sell_transaction.mint).await?;
 
-                if let Err(err) = confirm_sell(&signature, sell_transaction, None).await {
+                if let Err(err) = confirm_sell(&signature, sell_transaction, true).await {
                     return Err(err.into());
                 }
                 return Err("Token amount does not match the buy transaction".into());
@@ -259,7 +259,7 @@ pub async fn pump_fun_sell(
 
             match create_transaction(instructions.clone(), payer.insecure_clone()).await {
                 Ok(tx) => {
-                    confirm_sell(&tx, sell_transaction, Some(sol_out_f64)).await?;
+                    confirm_sell(&tx, sell_transaction, true).await?;
                     return Ok(tx);
                 }
                 Err(_e) => {

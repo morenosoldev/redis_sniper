@@ -134,7 +134,7 @@ pub async fn sell_swap(
             Ok(false) => {
                 let signature = find_sell_signature(&sell_transaction.mint).await?;
 
-                if let Err(err) = confirm_sell(&signature, sell_transaction, None).await {
+                if let Err(err) = confirm_sell(&signature, sell_transaction, false).await {
                     return Err(err.into());
                 }
                 return Ok(signature);
@@ -250,7 +250,8 @@ pub async fn sell_swap(
                                 let Err(err) = confirm_sell(
                                     &signature,
                                     sell_transaction,
-                                    None
+
+                                    false
                                 ).await
                             {
                                 return Err(err.into());
@@ -283,7 +284,14 @@ pub async fn sell_swap(
                 {
                     Ok(true) => {
                         let signature = find_sell_signature(&sell_transaction.mint).await?;
-                        if let Err(err) = confirm_sell(&signature, sell_transaction, None).await {
+                        if
+                            let Err(err) = confirm_sell(
+                                &signature,
+                                sell_transaction,
+
+                                false
+                            ).await
+                        {
                             return Err(err.into());
                         }
                         return Ok(signature);

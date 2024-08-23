@@ -79,6 +79,7 @@ pub struct TradeState {
     pub last_profit_percentage: f64,
     pub stop_loss_at_breakeven: bool,
     pub stop_loss_triggered: bool,
+    pub total_fee: f64,
     pub initial_investment: f64,
     pub taken_out: f64,
     pub remaining: f64,
@@ -118,6 +119,7 @@ impl MongoHandler {
         token_metadata: TokenMetadata,
         entry_price: f64,
         db_name: &str,
+        initial_fee: f64,
         collection_name: &str,
         sol_amount: f64
     ) -> Result<(), MongoError> {
@@ -157,6 +159,7 @@ impl MongoHandler {
                 ath_50_percent_triggered: false,
                 initial_investment_taken: false,
                 profit_taking_count: 0,
+                total_fee: initial_fee,
                 last_profit_taking_time: None,
                 last_profit_percentage: 0.0,
                 stop_loss_triggered: false,

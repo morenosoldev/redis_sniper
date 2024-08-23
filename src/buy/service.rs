@@ -1,6 +1,5 @@
 use super::utils;
 use super::price;
-use super::price::calculate_pump_price;
 use super::mongo;
 use price::get_current_sol_price;
 use mongo::{ TokenInfo, BuyTransaction, MongoHandler, TransactionType };
@@ -55,7 +54,9 @@ pub async fn save_buy_details(
                     pump
                 );
 
-                let sol_amount = calculate_sol_amount_spent(&confirmed_transaction).await.unwrap();
+                let mut sol_amount = calculate_sol_amount_spent(
+                    &confirmed_transaction
+                ).await.unwrap();
 
                 if let Some(ref amount_str) = amount {
                     // Parse the amount as f64
@@ -72,9 +73,17 @@ pub async fn save_buy_details(
                     let current_sol_price = get_current_sol_price().await.unwrap_or_default();
                     //let usd_amount = sol_amount * current_sol_price;
 
-                    let fee = confirmed_transaction.transaction.meta.unwrap().fee;
+                    let mut fee = confirmed_transaction.transaction.meta.unwrap().fee as f64;
 
-                    let fee_sol = (fee as f64) / 1_000_000_000.0;
+                    if pump {
+                        // Calculate the pump fee (1% of the original sol_amount spent)
+                        fee = sol_amount * 0.01;
+
+                        // Optionally, subtract the pump fee from sol_amount if needed
+                        sol_amount -= fee;
+                    }
+
+                    let fee_sol = fee;
                     let fee_usd = fee_sol * current_sol_price;
 
                     // Determine the vaults to use
@@ -164,6 +173,7 @@ pub async fn save_buy_details(
                             token_metadata,
                             buy_price_per_token_in_sol,
                             "solsniper",
+                            fee_sol,
                             "tokens",
                             sol_amount
                         ).await

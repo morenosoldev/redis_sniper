@@ -1,15 +1,7 @@
 use std::error::Error;
-use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
-use std::time::Duration;
 use borsh::{ BorshDeserialize, BorshSerialize };
 use serde::{ Deserialize, Serialize };
-use solana_client::rpc_config::RpcAccountInfoConfig;
-use solana_sdk::commitment_config::CommitmentConfig;
-use tokio::time::sleep;
-use solana_account_decoder::UiAccountEncoding;
-use std::convert::TryInto;
-use std::str::FromStr;
 use super::utils::{ pubkey_to_string, string_to_pubkey };
 
 #[derive(BorshSerialize, BorshDeserialize, Debug, Clone)]
@@ -35,128 +27,6 @@ pub struct PumpAccounts {
     pub dev: Pubkey,
     #[serde(serialize_with = "pubkey_to_string", deserialize_with = "string_to_pubkey")]
     pub metadata: Pubkey,
-}
-
-pub async fn get_bonding_curve(
-    rpc_client: &RpcClient,
-    bonding_curve_pubkey: Pubkey
-) -> Result<BondingCurveLayout, Box<dyn Error>> {
-    const MAX_RETRIES: u32 = 5;
-    const INITIAL_DELAY_MS: u64 = 200;
-    let mut retries = 0;
-    let mut delay = Duration::from_millis(INITIAL_DELAY_MS);
-
-    loop {
-        match
-            rpc_client.get_account_with_config(&bonding_curve_pubkey, RpcAccountInfoConfig {
-                encoding: Some(UiAccountEncoding::Base64),
-                commitment: Some(CommitmentConfig::processed()),
-                data_slice: None,
-                min_context_slot: None,
-            }).await
-        {
-            Ok(res) => {
-                if let Some(account) = res.value {
-                    let data_length = account.data.len();
-                    let data: [u8; 49] = account.data
-                        .try_into()
-                        .map_err(|_| format!("Invalid data length: {}", data_length))?;
-
-                    let layout = BondingCurveLayout {
-                        blob1: u64::from_le_bytes(data[0..8].try_into()?),
-                        virtual_token_reserves: u64::from_le_bytes(data[8..16].try_into()?),
-                        virtual_sol_reserves: u64::from_le_bytes(data[16..24].try_into()?),
-                        real_token_reserves: u64::from_le_bytes(data[24..32].try_into()?),
-                        real_sol_reserves: u64::from_le_bytes(data[32..40].try_into()?),
-                        blob4: u64::from_le_bytes(data[40..48].try_into()?),
-                        complete: data[48] != 0,
-                    };
-
-                    return Ok(layout);
-                } else {
-                    if retries >= MAX_RETRIES {
-                        dbg!("Max retries reached. Account not found.");
-                        return Err("Account not found after max retries".into());
-                    }
-                    sleep(delay).await;
-                    retries += 1;
-                    delay = Duration::from_millis(INITIAL_DELAY_MS * (2u64).pow(retries));
-                    continue;
-                }
-            }
-            Err(e) => {
-                if retries >= MAX_RETRIES {
-                    dbg!("Max retries reached. Last dbg: {}", &e);
-                    return Err(format!("Max retries reached. Last dbg: {}", e).into());
-                }
-                sleep(delay).await;
-                retries += 1;
-                delay = Duration::from_millis(INITIAL_DELAY_MS * (2u64).pow(retries));
-            }
-        }
-    }
-}
-
-pub async fn mint_to_pump_accounts(mint: &Pubkey) -> Result<PumpAccounts, Box<dyn Error>> {
-    // Constants
-    const PUMP_FUN_PROGRAM: &str = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
-
-    // Derive the bonding curve address
-    let (bonding_curve, _) = Pubkey::find_program_address(
-        &[b"bonding-curve", mint.as_ref()],
-        &Pubkey::from_str(PUMP_FUN_PROGRAM)?
-    );
-
-    // Derive the associated bonding curve address
-    let associated_bonding_curve = spl_associated_token_account::get_associated_token_address(
-        &bonding_curve,
-        mint
-    );
-
-    Ok(PumpAccounts {
-        mint: *mint,
-        bonding_curve,
-        associated_bonding_curve,
-        dev: Pubkey::default(),
-        metadata: Pubkey::default(),
-    })
-}
-
-pub async fn calculate_pump_price(
-    rpc_client: &RpcClient,
-    mint: Pubkey
-) -> Result<f64, Box<dyn Error>> {
-    let pump_accounts = mint_to_pump_accounts(&mint).await?;
-    let bonding_curve = get_bonding_curve(rpc_client, pump_accounts.bonding_curve).await?;
-
-    // Directly use BondingCurveLayout in the calculation function
-    let sol_price = calculate_pump_curve_price(&bonding_curve).await;
-
-    Ok(sol_price)
-}
-
-pub async fn calculate_pump_curve_price(state: &BondingCurveLayout) -> f64 {
-    if state.virtual_token_reserves == 0 || state.virtual_sol_reserves == 0 {
-        panic!("Invalid reserve data");
-    }
-
-    let virtual_token_reserves = state.virtual_token_reserves;
-    let virtual_sol_reserves = state.virtual_sol_reserves;
-
-    // Constants for conversions
-    const LAMPORTS_PER_SOL: u64 = 1_000_000_000; // Solana's conversion factor for lamports to SOL
-    const PUMP_CURVE_TOKEN_DECIMALS: u32 = 6; // Decimals for the token
-
-    // Adjust reserves using integer arithmetic
-    let adjusted_virtual_sol_reserves = virtual_sol_reserves / LAMPORTS_PER_SOL;
-    let adjusted_virtual_token_reserves =
-        virtual_token_reserves / (10u64).pow(PUMP_CURVE_TOKEN_DECIMALS);
-
-    // Calculate the sol price in terms of token and convert to f64 for final division
-    let sol_price =
-        (adjusted_virtual_sol_reserves as f64) / (adjusted_virtual_token_reserves as f64);
-
-    sol_price
 }
 
 pub async fn get_current_sol_price() -> Result<f64, Box<dyn Error>> {
