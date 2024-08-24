@@ -129,7 +129,7 @@ pub async fn buy_swap(
                 },
             };
 
-            match helius.send_smart_transaction_with_tip(config, Some(200000), Some("NY")).await {
+            match helius.send_smart_transaction_with_tip(config, Some(600000), Some("NY")).await {
                 Ok(signature) => {
                     dbg!("Transaction sent successfully: {}", signature);
                     tokio::time::sleep(Duration::from_secs(10)).await;
@@ -184,7 +184,7 @@ pub async fn buy_swap(
             },
         };
 
-        match helius.send_smart_transaction_with_tip(config, Some(200000), Some("NY")).await {
+        match helius.send_smart_transaction_with_tip(config, Some(600000), Some("NY")).await {
             Ok(signature) => {
                 dbg!("Transaction sent successfully: {}", signature);
             }
@@ -310,7 +310,7 @@ pub async fn buy_swap(
             },
         };
 
-        match helius.send_smart_transaction_with_tip(config, Some(200000), Some("NY")).await {
+        match helius.send_smart_transaction_with_tip(config, Some(600000), Some("NY")).await {
             Ok(signature) => {
                 dbg!("Transaction sent successfully: {}", signature);
                 let saved_details = save_buy_details(
